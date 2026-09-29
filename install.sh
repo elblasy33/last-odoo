@@ -599,18 +599,21 @@ ENVFILE
     chmod 600 "${TARGET_DIR}/.env"
 
     # ── 4. docker-compose.yml ─────────────────────────────────────────────────
-    # Single-quoted heredoc: NO shell expansion here.
-    # Docker Compose reads ALL ${VAR} from .env at runtime.
-    # The volume path ./etc/addons/${ODOO_VER_DOT} is also expanded by Compose from .env.
-    cat > "${TARGET_DIR}/docker-compose.yml" <<'COMPOSE_HEREDOC'
+    # IMPORTANT: We write ALL values directly (shell expansion).
+    # This guarantees ports, image names, and credentials are literal strings
+    # in the file — zero dependency on Docker Compose variable resolution.
+    # Only static container-internal references remain as-is (e.g. host=db).
+    cat > "${TARGET_DIR}/docker-compose.yml" <<COMPOSE_EOF
 # ============================================================================
-# Docker Compose — elblasy.app Multi-Instance Odoo Stack
-# All ${VARIABLES} are resolved by Docker Compose from .env at runtime
+# Docker Compose — elblasy.app
+# Instance  : ${INSTANCE_NAME}
+# Generated : ${gen_date}
+# All values are written literally — no runtime variable substitution needed.
 # ============================================================================
 services:
 
   db:
-    image: ${POSTGRES_IMAGE}
+    image: ${PG_IMAGE}
     container_name: db_${INSTANCE_NAME}
     restart: unless-stopped
     command: >
@@ -633,7 +636,7 @@ services:
       - ./db_data:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d:ro
     ports:
-      - "127.0.0.1:${POSTGRES_EXTERNAL_PORT}:5432"
+      - "127.0.0.1:${DB_PORT}:5432"
     networks:
       - odoo_net
     healthcheck:
@@ -657,8 +660,8 @@ services:
       USER:     ${POSTGRES_USER}
       PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "${ODOO_HTTP_PORT}:8069"
-      - "${ODOO_CHAT_PORT}:8072"
+      - "${HTTP_PORT}:8069"
+      - "${CHAT_PORT}:8072"
     volumes:
       - ./etc/odoo.conf:/etc/odoo/odoo.conf:ro
       - ./etc/addons/${ODOO_VER_DOT}:/mnt/extra-addons/${ODOO_VER_DOT}
@@ -670,7 +673,7 @@ networks:
   odoo_net:
     name: net_${INSTANCE_NAME}
     driver: bridge
-COMPOSE_HEREDOC
+COMPOSE_EOF
 
     success "All configuration files generated."
 }
