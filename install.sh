@@ -397,22 +397,26 @@ setup_instance_details() {
     esac
 
     # 2. Instance Naming based on selected version
+    local version_prefix="odoo${ODOO_VERSION}"
     local default_name
     default_name=$(generate_unique_instance_name "$ODOO_VERSION")
 
     if [ -n "$passed_name" ]; then
-        INSTANCE_NAME="$passed_name"
+        INPUT_INSTANCE_NAME="$passed_name"
     else
         echo ""
-        echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
+        echo -e "${WHITE}Enter instance identifier (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
         read_from_tty "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME "$default_name"
-        INSTANCE_NAME="${INPUT_INSTANCE_NAME:-$default_name}"
     fi
-    # Sanitize instance name (lowercase, alphanumeric, dashes)
-    INSTANCE_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
 
-    if [ -z "$INSTANCE_NAME" ]; then
-        INSTANCE_NAME="$default_name"
+    # Ensure instance name always contains odoo<version> prefix (e.g. odoo20-1)
+    local raw_name="${INPUT_INSTANCE_NAME:-$default_name}"
+    raw_name=$(echo "$raw_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
+    
+    if [[ "$raw_name" =~ ^odoo[0-9]+ ]]; then
+        INSTANCE_NAME="$raw_name"
+    else
+        INSTANCE_NAME="${version_prefix}-${raw_name}"
     fi
 
     TARGET_DIR="${INSTANCES_DIR}/${INSTANCE_NAME}"
@@ -449,8 +453,8 @@ setup_instance_details() {
     DB_PORT=$(find_next_free_port 5432)
     success "Allocated PostgreSQL direct port: ${BOLD}${CYAN}${DB_PORT}${NC}"
 
-    # Security Credentials Generation
-    POSTGRES_USER="odoo"
+    # Security Credentials Generation (tied to the specific version & instance)
+    POSTGRES_USER="odoo_${INSTANCE_NAME//-/_}"
     POSTGRES_PASSWORD=$(openssl rand -hex 16)
     POSTGRES_DB="postgres"
     ODOO_ADMIN_PASSWORD=$(openssl rand -base64 15 | tr -dc 'a-zA-Z0-9' | head -c 16)
@@ -516,7 +520,14 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Pre-create database 'odoo' for Odoo and enable vector
+-- Pre-create database matching the user so Odoo never encounters "database does not exist"
+CREATE DATABASE ${POSTGRES_USER} OWNER ${POSTGRES_USER};
+\c ${POSTGRES_USER}
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Also pre-create standard odoo database
 CREATE DATABASE odoo OWNER ${POSTGRES_USER};
 \c odoo
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -525,7 +536,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 DO \$\$
 BEGIN
-    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on postgres, template1 and odoo for PostgreSQL 17!';
+    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on postgres, template1, ${POSTGRES_USER} and odoo for PostgreSQL 17!';
 END \$\$;
 EOF
 
@@ -640,6 +651,7 @@ services:
     image: ${ODOO_IMAGE}
     container_name: odoo_${INSTANCE_NAME}
     restart: unless-stopped
+    command: odoo -c /etc/odoo/odoo.conf
     depends_on:
       db:
         condition: service_healthy
