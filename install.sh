@@ -8,16 +8,22 @@
 # Compatibility : Ubuntu 20.04 / 22.04 / 24.04 LTS & Debian 11/12
 # Supports      : Odoo 16 / 17 / 18 / 19 / 20 with PostgreSQL 17 + pgvector
 # ==============================================================================
+# Smart Port Allocation (version-aware, instant, no sequential scan):
+#   HTTP : 8000 + version        (8016 / 8017 / 8018 / 8019 / 8020)
+#   Chat : 9000 + version        (9016 / 9017 / 9018 / 9019 / 9020)
+#   DB   : 5400 + version - 10   (5406 / 5407 / 5408 / 5409 / 5410)
+#   Each additional instance of same version → HTTP/Chat += 10, DB += 1
+#   Example: Odoo 20 #2 → HTTP=8030, Chat=9030, DB=5411
+# ==============================================================================
 # Directory Layout per Instance:
 #   /opt/elblasy-odoo/instances/<name>/
 #   ├── etc/
-#   │   ├── odoo.conf          → mounted to /etc/odoo/odoo.conf  (read-only)
-#   │   └── addons/            → mounted to /mnt/extra-addons    (r/w)
-#   │       └── <ver>.0/       → put your custom modules here (e.g. 18.0/)
-#   ├── data/                  → /var/lib/odoo (filestore, sessions, addons cache)
+#   │   ├── odoo.conf          → /etc/odoo/odoo.conf  (read-only)
+#   │   └── addons/<ver>.0/    → /mnt/extra-addons/<ver>.0/
+#   ├── data/                  → /var/lib/odoo  (filestore, sessions)
 #   ├── db_data/               → PostgreSQL 17 pgdata
-#   ├── backups/               → automated & manual backups
-#   ├── init-db/               → SQL scripts run on first DB init
+#   ├── backups/
+#   ├── init-db/
 #   ├── docker-compose.yml
 #   └── .env
 # ==============================================================================
@@ -25,7 +31,7 @@
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
-# Color & Typography (ANSI 256-Color — disabled when not a terminal)
+# Colors (disabled when not a terminal)
 # ------------------------------------------------------------------------------
 if [[ -t 1 ]]; then
     NC='\033[0m';    BOLD='\033[1m';    DIM='\033[2m';  UNDERLINE='\033[4m'
@@ -54,8 +60,9 @@ readonly LOG_DIR="/var/log/elblasy-odoo"
 # Runtime variables (set by setup_wizard)
 INSTANCE_NAME=""
 TARGET_DIR=""
-ODOO_VERSION=""
-ODOO_VER_DOT=""     # e.g. "18.0" — used for the addons subfolder name
+ODOO_VERSION=""         # e.g. "18"
+ODOO_VER_NUM=18         # numeric
+ODOO_VER_DOT=""         # e.g. "18.0"
 ODOO_IMAGE=""
 HTTP_PORT=""
 CHAT_PORT=""
@@ -75,11 +82,11 @@ MAINTENANCE_WORK_MEM="128MB"
 # ------------------------------------------------------------------------------
 mkdir -p "${LOG_DIR}" 2>/dev/null || true
 INSTALL_LOG="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
-touch "${INSTALL_LOG}" 2>/dev/null || INSTALL_LOG="/tmp/elblasy_install_$(date +%Y%m%d_%H%M%S).log"
+touch "${INSTALL_LOG}" 2>/dev/null || INSTALL_LOG="/tmp/elblasy_$(date +%Y%m%d_%H%M%S).log"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${INSTALL_LOG}"; }
 
 # ------------------------------------------------------------------------------
-# UI
+# UI Helpers
 # ------------------------------------------------------------------------------
 print_banner() {
     clear
@@ -91,7 +98,7 @@ print_banner() {
     echo ""
     echo -e "${B2}${BOLD}  ╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${B2}${BOLD}  ║${WHITE}  Enterprise Odoo (v16-v20) Multi-Instance Suite + PostgreSQL 17 pgvector${B2} ║${NC}"
-    echo -e "${B2}${BOLD}  ║${CYAN}  Isolated Deployments | Smart Port Hunter | AI-Ready (RAG + Vectors)    ${B2} ║${NC}"
+    echo -e "${B2}${BOLD}  ║${CYAN}  Version-Aware Port Allocation | Isolated Deployments | AI-Ready        ${B2} ║${NC}"
     echo -e "${B2}${BOLD}  ║${YELLOW}  Powered by elblasy.app — Empowering Modern Cloud Infrastructure        ${B2} ║${NC}"
     echo -e "${B2}${BOLD}  ╚═══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -147,13 +154,81 @@ check_os() {
 }
 
 # ------------------------------------------------------------------------------
-# Port Hunter
+# Port Availability Check
+# Uses ss (fast) with netstat fallback — checks a single port instantly
 # ------------------------------------------------------------------------------
-port_in_use() { ss -tuln 2>/dev/null | grep -q ":${1} "; }
-next_free_port() {
+port_in_use() {
     local p=$1
-    while port_in_use "$p"; do log "Port $p busy → $((p+1))"; p=$((p+1)); done
-    echo "$p"
+    # ss is fastest and most reliable on modern Linux
+    if command -v ss &>/dev/null; then
+        ss -tuln 2>/dev/null | grep -q ":${p} \|:${p}$" && return 0
+    elif command -v netstat &>/dev/null; then
+        netstat -tuln 2>/dev/null | grep -q ":${p} " && return 0
+    else
+        # fallback: try a TCP connect
+        (echo >/dev/tcp/127.0.0.1/"$p") &>/dev/null && return 0
+    fi
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# Smart Version-Aware Port Allocator
+# Port scheme (no slow sequential scan):
+#   HTTP base  = 8000 + ver_num    (Odoo 16→8016, 17→8017, 18→8018, 19→8019, 20→8020)
+#   Chat base  = 9000 + ver_num    (Odoo 16→9016, 17→9017, 18→9018, 19→9019, 20→9020)
+#   DB   base  = 5400 + ver_num-10 (Odoo 16→5406, 17→5407, 18→5408, 19→5409, 20→5410)
+#   Per additional instance: HTTP/Chat += 10, DB += 1
+#   → Odoo 20 #1: 8020/9020/5410  #2: 8030/9030/5411  #3: 8040/9040/5412
+# ------------------------------------------------------------------------------
+allocate_ports() {
+    local ver_num="$1"    # numeric: 16-20 (or 17 for custom)
+
+    local http_base=$((8000 + ver_num))
+    local chat_base=$((9000 + ver_num))
+    local db_base=$((5400 + ver_num - 10))
+
+    step_header "3. Smart Port Allocation (Version-Aware)"
+    info "Port scheme for Odoo ${ver_num}:"
+    echo -e "  HTTP base : ${CYAN}${http_base}${NC}  (${http_base}, $((http_base+10)), $((http_base+20)), ...)"
+    echo -e "  Chat base : ${CYAN}${chat_base}${NC}  (${chat_base}, $((chat_base+10)), $((chat_base+20)), ...)"
+    echo -e "  DB   base : ${CYAN}${db_base}${NC}  (${db_base}, $((db_base+1)), $((db_base+2)), ...)"
+    echo ""
+
+    # Try each slot: n=0,1,2,...
+    local n=0 found=false
+    while [[ $n -le 99 ]]; do
+        local h=$((http_base + n * 10))
+        local c=$((chat_base + n * 10))
+        local d=$((db_base + n))
+
+        local h_ok=true c_ok=true d_ok=true
+        port_in_use "$h" && h_ok=false
+        port_in_use "$c" && c_ok=false
+        port_in_use "$d" && d_ok=false
+
+        if $h_ok && $c_ok && $d_ok; then
+            HTTP_PORT=$h
+            CHAT_PORT=$c
+            DB_PORT=$d
+            found=true
+            log "Port slot n=${n}: HTTP=${HTTP_PORT} Chat=${CHAT_PORT} DB=${DB_PORT}"
+            break
+        else
+            log "Slot n=${n} busy (HTTP=${h}:${h_ok}, Chat=${c}:${c_ok}, DB=${d}:${d_ok}) → next"
+            n=$((n + 1))
+        fi
+    done
+
+    $found || die "No free port combination found for Odoo ${ver_num} after 100 attempts."
+
+    if [[ $n -eq 0 ]]; then
+        success "Ports allocated (base slot, no conflicts):"
+    else
+        warn "Base ports busy — allocated slot #$((n+1)):"
+    fi
+    echo -e "  HTTP (web)       : ${GREEN}${BOLD}${HTTP_PORT}${NC}"
+    echo -e "  Chat (longpoll)  : ${GREEN}${BOLD}${CHAT_PORT}${NC}"
+    echo -e "  DB   (host-side) : ${GREEN}${BOLD}${DB_PORT}${NC}  ${GRAY}(127.0.0.1 only)${NC}"
 }
 
 # ------------------------------------------------------------------------------
@@ -189,74 +264,70 @@ https://download.docker.com/linux/${ID} $(lsb_release -cs) stable" \
 }
 
 # ------------------------------------------------------------------------------
-# Odoo Version → Docker Image + version-dot string
-# Docker Hub official tags: odoo:16, odoo:17, odoo:18
-# Odoo 19 / 20 have NO official image yet → warn + fallback
+# Odoo Version → Docker Image + dot-version string
 # ------------------------------------------------------------------------------
 resolve_odoo_version() {
     local ver="$1"
+    ODOO_VER_NUM=$ver
     case "$ver" in
         16) ODOO_IMAGE="odoo:16";  ODOO_VER_DOT="16.0" ;;
         17) ODOO_IMAGE="odoo:17";  ODOO_VER_DOT="17.0" ;;
         18) ODOO_IMAGE="odoo:18";  ODOO_VER_DOT="18.0" ;;
         19)
-            ODOO_VER_DOT="19.0"
-            warn "Odoo 19: no official Docker Hub image yet."
-            # Check for local build
-            local li
-            li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-                | grep -iE 'odoo.*19|odoo:19' | head -n1 || true)
+            ODOO_VER_DOT="19.0"; ODOO_VER_NUM=19
+            # check for local image first
+            local li; li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+                | grep -iE '^odoo:19$|odoo.*19' | head -n1 || true)
             if [[ -n "$li" ]]; then
                 ODOO_IMAGE="$li"
-                warn "Using local image found: ${BOLD}${li}${NC}"
+                info "Using locally found Odoo 19 image: ${CYAN}${li}${NC}"
             else
-                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env once v19 is available."
+                warn "Odoo 19 has no official Docker Hub image yet."
+                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env when official image ships."
                 ODOO_IMAGE="odoo:17"
             fi
             ;;
         20)
-            ODOO_VER_DOT="20.0"
-            warn "Odoo 20: no official Docker Hub image yet."
-            local li
-            li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-                | grep -iE 'odoo.*20|odoo:20|odoo20' | head -n1 || true)
+            ODOO_VER_DOT="20.0"; ODOO_VER_NUM=20
+            local li; li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+                | grep -iE '^odoo:20$|odoo:20\.|odoo20' | head -n1 || true)
             if [[ -n "$li" ]]; then
                 ODOO_IMAGE="$li"
-                warn "Using local image found: ${BOLD}${li}${NC}"
+                info "Using locally found Odoo 20 image: ${CYAN}${li}${NC}"
             else
-                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env once v20 is available."
+                warn "Odoo 20 has no official Docker Hub image yet."
+                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env when official image ships."
                 ODOO_IMAGE="odoo:17"
             fi
             ;;
-        custom)
-            ODOO_VER_DOT="custom"
-            ;;
-        *) ODOO_IMAGE="odoo:17"; ODOO_VER_DOT="17.0" ;;
+        *) ODOO_IMAGE="odoo:17"; ODOO_VER_DOT="17.0"; ODOO_VER_NUM=17 ;;
     esac
 }
 
 # ------------------------------------------------------------------------------
-# Instance list
+# Existing Instance List
 # ------------------------------------------------------------------------------
 list_existing_instances() {
     [[ -d "$INSTANCES_DIR" ]] || return 0
     local count; count=$(find "$INSTANCES_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     [[ "$count" -gt 0 ]] || return 0
-    echo -e "${YELLOW}${BOLD}Current instances on this server:${NC}"
+    echo -e "${YELLOW}${BOLD}Existing instances on this server:${NC}"
     for inst in "${INSTANCES_DIR}"/*/; do
         [[ -d "$inst" ]] || continue
         local name; name=$(basename "$inst")
-        local http_p="?"; [[ -f "${inst}.env" ]] && \
+        local http_p="?" ver="?" img="?"
+        if [[ -f "${inst}.env" ]]; then
             http_p=$(grep -E '^ODOO_HTTP_PORT=' "${inst}.env" 2>/dev/null | cut -d= -f2 || echo "?")
-        local img="?"; [[ -f "${inst}.env" ]] && \
-            img=$(grep -E '^ODOO_IMAGE=' "${inst}.env" 2>/dev/null | cut -d= -f2 || echo "?")
+            ver=$(grep  -E '^ODOO_VERSION='    "${inst}.env" 2>/dev/null | cut -d= -f2 || echo "?")
+            img=$(grep  -E '^ODOO_IMAGE='      "${inst}.env" 2>/dev/null | cut -d= -f2 || echo "?")
+        fi
         local stat
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^odoo_${name}$"; then
             stat="${GREEN}Running${NC}"
         else
             stat="${GRAY}Stopped${NC}"
         fi
-        echo -e "  ${BOLD}${name}${NC}  |  Port: ${CYAN}${http_p}${NC}  |  Image: ${CYAN}${img}${NC}  |  ${stat}"
+        echo -e "  ${BOLD}${name}${NC}  v${ver}  Port:${CYAN}${http_p}${NC}  Image:${CYAN}${img}${NC}  ${stat}"
     done
     echo ""
 }
@@ -268,7 +339,7 @@ auto_name() {
 }
 
 # ------------------------------------------------------------------------------
-# Hardware tuning
+# Hardware Tuning
 # ------------------------------------------------------------------------------
 tune_for_hardware() {
     local ram_mb; ram_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
@@ -277,7 +348,7 @@ tune_for_hardware() {
     elif [[ $ram_mb -lt 8192 ]]; then SHARED_BUFFERS="1GB";   EFFECTIVE_CACHE_SIZE="3GB";    WORK_MEM="128MB"; MAINTENANCE_WORK_MEM="512MB"; WORKERS_COUNT=5
     else SHARED_BUFFERS="2GB"; EFFECTIVE_CACHE_SIZE="6GB"; WORK_MEM="256MB"; MAINTENANCE_WORK_MEM="1GB"; WORKERS_COUNT=$(( ($(nproc)*2)+1 ))
     fi
-    log "Hardware tuning done: RAM=${ram_mb}MB workers=${WORKERS_COUNT}"
+    log "Hardware: RAM=${ram_mb}MB workers=${WORKERS_COUNT} shared_buffers=${SHARED_BUFFERS}"
 }
 
 # ------------------------------------------------------------------------------
@@ -288,14 +359,15 @@ setup_wizard() {
     mkdir -p "$INSTANCES_DIR"
     list_existing_instances
 
-    # ── Version ────────────────────────────────────────────────────────────────
+    # ── Version Selection ──────────────────────────────────────────────────────
     echo -e "${WHITE}${BOLD}Select Odoo Version:${NC}"
-    echo -e "  ${CYAN}1)${NC} Odoo ${BOLD}20${NC}  ${YELLOW}[Cutting-Edge — AI Agents & pgvector RAG]${NC}  ${GRAY}(no official image yet)${NC}"
-    echo -e "  ${CYAN}2)${NC} Odoo ${BOLD}19${NC}  ${DIM}(Preview — no official Docker image yet)${NC}"
-    echo -e "  ${CYAN}3)${NC} Odoo ${BOLD}18${NC}  ${GREEN}[Latest Stable | Official Docker Hub image: odoo:18]${NC}"
-    echo -e "  ${CYAN}4)${NC} Odoo ${BOLD}17${NC}  ${GREEN}[Long Term Support | Official image: odoo:17]${NC}"
-    echo -e "  ${CYAN}5)${NC} Odoo ${BOLD}16${NC}  ${GREEN}[Long Term Support | Official image: odoo:16]${NC}"
-    echo -e "  ${CYAN}6)${NC} Custom Docker image  ${DIM}(provide your own tag)${NC}"
+    echo ""
+    echo -e "  ${CYAN}1)${NC} Odoo ${BOLD}20${NC}  ${YELLOW}[Cutting-Edge — AI Agents & RAG]${NC}          HTTP: ${CYAN}8020${NC} | Chat: ${CYAN}9020${NC}"
+    echo -e "  ${CYAN}2)${NC} Odoo ${BOLD}19${NC}  ${DIM}[Preview — no official image yet]${NC}             HTTP: ${CYAN}8019${NC} | Chat: ${CYAN}9019${NC}"
+    echo -e "  ${CYAN}3)${NC} Odoo ${BOLD}18${NC}  ${GREEN}[Latest Stable | image: odoo:18]${NC}             HTTP: ${CYAN}8018${NC} | Chat: ${CYAN}9018${NC}"
+    echo -e "  ${CYAN}4)${NC} Odoo ${BOLD}17${NC}  ${GREEN}[Long Term Support | image: odoo:17]${NC}         HTTP: ${CYAN}8017${NC} | Chat: ${CYAN}9017${NC}"
+    echo -e "  ${CYAN}5)${NC} Odoo ${BOLD}16${NC}  ${GREEN}[Long Term Support | image: odoo:16]${NC}         HTTP: ${CYAN}8016${NC} | Chat: ${CYAN}9016${NC}"
+    echo -e "  ${CYAN}6)${NC} Custom Docker image"
     echo ""
 
     local vchoice="3"
@@ -308,16 +380,16 @@ setup_wizard() {
         4) ODOO_VERSION="17"; resolve_odoo_version 17 ;;
         5) ODOO_VERSION="16"; resolve_odoo_version 16 ;;
         6)
-            ODOO_VERSION="custom"; ODOO_VER_DOT="custom"
+            ODOO_VERSION="custom"; ODOO_VER_DOT="custom"; ODOO_VER_NUM=17
             local ci="odoo:17"
-            read_tty "Full Docker image tag (e.g. myrepo/odoo:20, odoo:18): " ci "odoo:17"
+            read_tty "Docker image tag (e.g. myrepo/odoo:20): " ci "odoo:17"
             ODOO_IMAGE="$ci"
             ;;
         *) ODOO_VERSION="18"; resolve_odoo_version 18 ;;
     esac
-    success "Selected: Odoo ${BOLD}${ODOO_VERSION}${NC} | image: ${CYAN}${ODOO_IMAGE}${NC} | addons folder: ${CYAN}${ODOO_VER_DOT}/${NC}"
+    success "Selected: Odoo ${BOLD}${ODOO_VERSION}${NC} | image: ${CYAN}${ODOO_IMAGE}${NC}"
 
-    # ── Instance name ──────────────────────────────────────────────────────────
+    # ── Instance Name ──────────────────────────────────────────────────────────
     local def_name; def_name=$(auto_name "$ODOO_VERSION")
     echo ""
     local INPUT_NAME=""; read_tty "Instance name [default: ${def_name}]: " INPUT_NAME "$def_name"
@@ -328,104 +400,83 @@ setup_wizard() {
     if [[ "$raw" =~ ^odoo[0-9]+ ]]; then INSTANCE_NAME="$raw"
     else INSTANCE_NAME="odoo${ODOO_VERSION}-${raw}"; fi
     TARGET_DIR="${INSTANCES_DIR}/${INSTANCE_NAME}"
-    [[ -d "$TARGET_DIR" ]] && die "Instance '${INSTANCE_NAME}' already exists. Delete with: elblasy delete ${INSTANCE_NAME}"
+    [[ -d "$TARGET_DIR" ]] && die "Instance '${INSTANCE_NAME}' already exists. Delete it first: elblasy delete ${INSTANCE_NAME}"
     info "Instance path: ${BOLD}${TARGET_DIR}${NC}"
 
-    # ── Ports ──────────────────────────────────────────────────────────────────
-    step_header "3. Smart Port Allocation"
+    # ── Smart Port Allocation ──────────────────────────────────────────────────
+    allocate_ports "$ODOO_VER_NUM"
 
-    info "Scanning HTTP port from 8069..."
-    HTTP_PORT=$(next_free_port 8069)
-    [[ "$HTTP_PORT" -eq 8069 ]] \
-        && success "HTTP port: ${CYAN}${HTTP_PORT}${NC}" \
-        || warn "8069 busy → assigned: ${CYAN}${HTTP_PORT}${NC}"
-
-    info "Scanning longpolling/gevent port..."
-    local lp_start=$((HTTP_PORT + 3))
-    if ! port_in_use 8072 && [[ "$HTTP_PORT" -ne 8072 ]]; then CHAT_PORT=8072
-    else CHAT_PORT=$(next_free_port "$lp_start"); fi
-    success "Longpolling port: ${CYAN}${CHAT_PORT}${NC}"
-
-    info "Scanning PostgreSQL host port from 5432..."
-    DB_PORT=$(next_free_port 5432)
-    success "PostgreSQL host port: ${CYAN}${DB_PORT}${NC}  (127.0.0.1 only — not public)"
-
-    # ── Credentials ────────────────────────────────────────────────────────────
+    # ── Credentials ───────────────────────────────────────────────────────────
     POSTGRES_USER="odoo_$(echo "${INSTANCE_NAME}" | tr '-' '_')"
     POSTGRES_PASSWORD=$(openssl rand -hex 20)
     ODOO_ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 20)
     tune_for_hardware
 
     echo ""
-    echo -e "${B3}${BOLD}  +-- Configuration Summary --------------------------------------------------------+${NC}"
+    echo -e "${B3}${BOLD}  +-- Instance Summary ----------------------------------------------------------+${NC}"
     echo -e "  |  Instance Name  : ${WHITE}${INSTANCE_NAME}${NC}"
-    echo -e "  |  Odoo Version   : ${GREEN}Odoo ${ODOO_VERSION}${NC}  →  image: ${CYAN}${ODOO_IMAGE}${NC}"
-    echo -e "  |  Addons Folder  : ${CYAN}etc/addons/${ODOO_VER_DOT}/${NC}  (→ /mnt/extra-addons inside container)"
+    echo -e "  |  Odoo Version   : ${GREEN}Odoo ${ODOO_VERSION}${NC}  (${CYAN}${ODOO_IMAGE}${NC})"
+    echo -e "  |  Addons Path    : ${CYAN}etc/addons/${ODOO_VER_DOT}/${NC}  → /mnt/extra-addons/${ODOO_VER_DOT}/"
     echo -e "  |  HTTP Port      : ${CYAN}${HTTP_PORT}${NC}"
-    echo -e "  |  Longpolling    : ${CYAN}${CHAT_PORT}${NC}"
+    echo -e "  |  Chat Port      : ${CYAN}${CHAT_PORT}${NC}"
     echo -e "  |  DB Host Port   : ${CYAN}${DB_PORT}${NC}  (127.0.0.1 only)"
     echo -e "  |  Workers        : ${GREEN}${WORKERS_COUNT}${NC}  (auto-tuned)"
     echo -e "  |  PostgreSQL     : ${PURPLE}pgvector/pgvector:pg17${NC}"
-    echo -e "${B3}${BOLD}  +---------------------------------------------------------------------------------+${NC}"
+    echo -e "${B3}${BOLD}  +------------------------------------------------------------------------------+${NC}"
     echo ""
 }
 
 # ------------------------------------------------------------------------------
 # Filesystem
-# The correct structure mirrors actual Odoo Enterprise deployments:
-#
-#   etc/odoo.conf          → /etc/odoo/odoo.conf     (read-only)
-#   etc/addons/<ver>.0/    → /mnt/extra-addons        (rw)
-#   data/                  → /var/lib/odoo            (filestore, sessions, addons cache)
-#   db_data/               → PostgreSQL pgdata
 # ------------------------------------------------------------------------------
 create_filesystem() {
-    step_header "4. Creating Isolated Directory Layout"
+    step_header "4. Creating Instance Directory Layout"
 
-    local addons_ver_dir="${TARGET_DIR}/etc/addons/${ODOO_VER_DOT}"
+    local addons_dir="${TARGET_DIR}/etc/addons/${ODOO_VER_DOT}"
 
     (
-        # Standard dirs
         mkdir -p \
             "${TARGET_DIR}/etc" \
-            "${addons_ver_dir}" \
+            "${addons_dir}" \
             "${TARGET_DIR}/data" \
             "${TARGET_DIR}/db_data" \
             "${TARGET_DIR}/backups" \
             "${TARGET_DIR}/init-db"
 
-        # Permissions
-        # data/ — Odoo container runs as uid 101 (odoo user); needs full rw
+        # data/ → Odoo container runs as uid 101; needs full rw
         chmod 777 "${TARGET_DIR}/data"
-        # addons — developers need rw, container needs r
-        chmod -R 755 "${TARGET_DIR}/etc/addons"
-        # config — read-only is enough for the container
-        chmod 755 "${TARGET_DIR}/etc"
+        # addons subtree — readable by container, writable by admin
+        chmod -R 755 "${TARGET_DIR}/etc"
         # backups — private
         chmod 700 "${TARGET_DIR}/backups"
 
-        # Placeholder README so the version folder is visible in git and guides devs
-        cat > "${addons_ver_dir}/README.txt" <<RMTXT
-# Odoo ${ODOO_VERSION} Custom Addons
-# Place your custom module folders here.
-# Each subfolder = one Odoo module.
-#
-# Container path: /mnt/extra-addons/${ODOO_VER_DOT}/
-# addons_path  : /mnt/extra-addons/${ODOO_VER_DOT}
-#
-# After adding/updating modules:
-#   docker exec odoo_${INSTANCE_NAME} odoo -u <module> -d <db> --stop-after-init
+        # Developer guide placeholder in the version addons folder
+        cat > "${addons_dir}/ADDONS_README.txt" <<RMTXT
+Odoo ${ODOO_VERSION} Custom Addons
+===================================
+Drop your custom module folders here.
+Each subfolder = one Odoo module.
+
+Host path    : ${addons_dir}/
+Container    : /mnt/extra-addons/${ODOO_VER_DOT}/
+addons_path  : /mnt/extra-addons/${ODOO_VER_DOT}
+
+After adding/updating a module:
+  docker exec odoo_${INSTANCE_NAME} odoo -u <module_name> -d <database> --stop-after-init
+  or simply restart the instance: elblasy restart ${INSTANCE_NAME}
 RMTXT
     ) &
-    spinner $! "Creating folder structure"
+    spinner $! "Creating directory layout"
     success "Directories ready: ${WHITE}${TARGET_DIR}${NC}"
-    success "Custom addons dir: ${CYAN}etc/addons/${ODOO_VER_DOT}/${NC}  (mount → /mnt/extra-addons/${ODOO_VER_DOT})"
+    info "Drop custom modules in: ${CYAN}${TARGET_DIR}/etc/addons/${ODOO_VER_DOT}/${NC}"
 }
 
 # ------------------------------------------------------------------------------
 # Configuration Files
-# Shell variables are expanded when writing these files (except docker-compose.yml
-# which uses Docker Compose variable substitution from .env at runtime).
+# IMPORTANT:
+#  - Shell variables are expanded when writing odoo.conf, .env  (heredoc without quotes)
+#  - docker-compose.yml uses SINGLE-QUOTED heredoc → NO shell expansion
+#    Docker Compose reads all ${VAR} references from .env at runtime
 # ------------------------------------------------------------------------------
 generate_configs() {
     step_header "5. Generating Configuration Files"
@@ -433,20 +484,20 @@ generate_configs() {
     local gen_date; gen_date=$(date '+%Y-%m-%d %H:%M:%S')
 
     # ── 1. PostgreSQL init SQL ─────────────────────────────────────────────────
-    # ONLY installs extensions on postgres + template1.
-    # Odoo will create its own databases; template1 ensures every new DB inherits extensions.
+    # Only creates extensions on postgres + template1.
+    # Odoo manages its own databases — we must NOT pre-create them here.
     cat > "${TARGET_DIR}/init-db/01-pgvector-init.sql" <<SQL
--- =============================================================================
+-- ============================================================================
 -- pgvector & Extensions Bootstrap — elblasy.app
--- Runs ONCE on first PostgreSQL container startup (docker-entrypoint-initdb.d)
--- =============================================================================
+-- Runs once on first PostgreSQL container startup
+-- ============================================================================
 \c postgres
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- template1: every future database Odoo creates will inherit these extensions
+-- template1: every future database created by Odoo inherits these extensions
 \c template1
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -455,31 +506,30 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 DO \$\$
 BEGIN
-    RAISE NOTICE 'elblasy.app: pgvector + extensions loaded on postgres & template1.';
+    RAISE NOTICE 'elblasy.app: pgvector + extensions activated on postgres and template1.';
 END \$\$;
 SQL
 
     # ── 2. odoo.conf ──────────────────────────────────────────────────────────
-    # addons_path includes the version-specific subfolder inside /mnt/extra-addons
     cat > "${TARGET_DIR}/etc/odoo.conf" <<ODOOCONF
 [options]
-; =============================================================================
+; ============================================================================
 ; Odoo ${ODOO_VERSION} Configuration — elblasy.app
 ; Instance  : ${INSTANCE_NAME}
 ; Generated : ${gen_date}
-; =============================================================================
+; ============================================================================
 
-; Custom addons: mounted from etc/addons/${ODOO_VER_DOT}/ on the host
-; The version subfolder (${ODOO_VER_DOT}/) mirrors Odoo Enterprise convention
+; Custom addons — version-specific folder (Odoo Enterprise convention)
+; Host: etc/addons/${ODOO_VER_DOT}/  →  Container: /mnt/extra-addons/${ODOO_VER_DOT}/
 addons_path = /mnt/extra-addons/${ODOO_VER_DOT}
 
-; Odoo data directory (filestore, sessions, installed addons cache)
+; Data directory (filestore, sessions, installed addons cache)
 data_dir = /var/lib/odoo
 
-; Master Password (used by /web/database manager)
+; Master Password (database manager at /web/database/manager)
 admin_passwd = ${ODOO_ADMIN_PASSWORD}
 
-; Database connection (points to the db service in docker-compose)
+; Database
 db_host     = db
 db_port     = 5432
 db_user     = ${POSTGRES_USER}
@@ -489,13 +539,13 @@ db_maxconn  = 64
 dbfilter    = .*
 list_db     = True
 
-; HTTP / Network  (Odoo 16 → 20 compatible keys)
+; Network (Odoo 16-20 compatible)
 http_interface = 0.0.0.0
 http_port      = 8069
 gevent_port    = 8072
 proxy_mode     = True
 
-; Workers & Performance (hardware-tuned for this server)
+; Workers & Limits (hardware-tuned)
 workers              = ${WORKERS_COUNT}
 max_cron_threads     = 2
 limit_memory_hard    = 2684354560
@@ -505,19 +555,20 @@ limit_time_cpu       = 600
 limit_time_real      = 1200
 limit_time_real_cron = 1800
 
-; Logging — keep as stdout for Docker (do NOT set logfile in containers)
+; Logging — stdout for Docker (never set logfile in containers)
 log_level = info
 log_db    = False
 ODOOCONF
     chmod 644 "${TARGET_DIR}/etc/odoo.conf"
 
     # ── 3. .env ───────────────────────────────────────────────────────────────
+    # CRITICAL: ODOO_HTTP_PORT and ODOO_CHAT_PORT must be here for docker-compose ports mapping
     cat > "${TARGET_DIR}/.env" <<ENVFILE
-# =============================================================================
+# ============================================================================
 # Instance Environment — elblasy.app
 # Instance  : ${INSTANCE_NAME}
 # Generated : ${gen_date}
-# =============================================================================
+# ============================================================================
 COMPOSE_PROJECT_NAME=elblasy_$(echo "${INSTANCE_NAME}" | tr '-' '_')
 INSTANCE_NAME=${INSTANCE_NAME}
 ODOO_VERSION=${ODOO_VERSION}
@@ -526,15 +577,20 @@ ODOO_VER_DOT=${ODOO_VER_DOT}
 ODOO_IMAGE=${ODOO_IMAGE}
 POSTGRES_IMAGE=${PG_IMAGE}
 
+# Ports — mapped on the Docker host
 ODOO_HTTP_PORT=${HTTP_PORT}
 ODOO_CHAT_PORT=${CHAT_PORT}
 POSTGRES_EXTERNAL_PORT=${DB_PORT}
 
+# Database credentials
 POSTGRES_USER=${POSTGRES_USER}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=${POSTGRES_DB}
+
+# Odoo master/admin password
 ODOO_ADMIN_PASSWORD=${ODOO_ADMIN_PASSWORD}
 
+# PostgreSQL tuning (hardware-tuned)
 SHARED_BUFFERS=${SHARED_BUFFERS}
 EFFECTIVE_CACHE_SIZE=${EFFECTIVE_CACHE_SIZE}
 WORK_MEM=${WORK_MEM}
@@ -543,17 +599,14 @@ ENVFILE
     chmod 600 "${TARGET_DIR}/.env"
 
     # ── 4. docker-compose.yml ─────────────────────────────────────────────────
-    # Written with single-quoted heredoc → NO shell expansion here.
-    # All ${VAR} references are resolved by Docker Compose from .env at runtime.
-    # Volume mount strategy:
-    #   ./etc/odoo.conf                → /etc/odoo/odoo.conf     (ro)
-    #   ./etc/addons/${ODOO_VER_DOT}   → /mnt/extra-addons/${ODOO_VER_DOT}  (rw)
-    #   ./data                         → /var/lib/odoo
+    # Single-quoted heredoc: NO shell expansion here.
+    # Docker Compose reads ALL ${VAR} from .env at runtime.
+    # The volume path ./etc/addons/${ODOO_VER_DOT} is also expanded by Compose from .env.
     cat > "${TARGET_DIR}/docker-compose.yml" <<'COMPOSE_HEREDOC'
-# =============================================================================
+# ============================================================================
 # Docker Compose — elblasy.app Multi-Instance Odoo Stack
-# Variables are resolved from .env at runtime by Docker Compose
-# =============================================================================
+# All ${VARIABLES} are resolved by Docker Compose from .env at runtime
+# ============================================================================
 services:
 
   db:
@@ -607,11 +660,8 @@ services:
       - "${ODOO_HTTP_PORT}:8069"
       - "${ODOO_CHAT_PORT}:8072"
     volumes:
-      # Config (read-only — never let the container modify it)
       - ./etc/odoo.conf:/etc/odoo/odoo.conf:ro
-      # Custom addons (version-specific subfolder) — developers drop modules here
       - ./etc/addons/${ODOO_VER_DOT}:/mnt/extra-addons/${ODOO_VER_DOT}
-      # Data dir: filestore, sessions, addons cache generated by Odoo
       - ./data:/var/lib/odoo
     networks:
       - odoo_net
@@ -622,11 +672,11 @@ networks:
     driver: bridge
 COMPOSE_HEREDOC
 
-    success "Configuration files written successfully."
+    success "All configuration files generated."
 }
 
 # ------------------------------------------------------------------------------
-# Pull & Start
+# Pull Images & Start Containers
 # ------------------------------------------------------------------------------
 start_and_verify() {
     step_header "6. Pulling Images & Starting Containers"
@@ -636,38 +686,37 @@ start_and_verify() {
         docker pull "${PG_IMAGE}" 2>&1 | tee -a "${INSTALL_LOG}"
         success "PostgreSQL 17 + pgvector image ready."
     else
-        success "PostgreSQL 17 + pgvector image already cached."
+        success "PostgreSQL 17 + pgvector image cached."
     fi
 
     if ! docker image inspect "${ODOO_IMAGE}" &>/dev/null; then
-        info "Pulling Odoo image ${ODOO_IMAGE} (may take a few minutes)..."
+        info "Pulling Odoo image ${ODOO_IMAGE}..."
         docker pull "${ODOO_IMAGE}" 2>&1 | tee -a "${INSTALL_LOG}"
         success "Odoo image downloaded."
     else
-        success "Odoo image ${ODOO_IMAGE} already cached locally."
+        success "Odoo image ${ODOO_IMAGE} cached."
     fi
 
     echo ""
-    info "Starting container stack for '${INSTANCE_NAME}'..."
+    info "Starting stack for '${INSTANCE_NAME}'..."
     (cd "${TARGET_DIR}" && docker compose up -d) 2>&1 | tee -a "${INSTALL_LOG}"
-    success "Container stack launched in background."
+    success "Container stack launched."
 
     # Wait for PostgreSQL
     echo ""
-    info "Waiting for PostgreSQL 17 healthcheck..."
+    info "Waiting for PostgreSQL 17..."
     local db_ok=false i
     for i in $(seq 1 40); do
         printf "\r${CYAN}[%02d/40]${NC} Probing database..." "$i"
         if docker exec "db_${INSTANCE_NAME}" pg_isready -U "${POSTGRES_USER}" &>/dev/null; then
             db_ok=true
-            printf "\r${GREEN}[OK]${NC} PostgreSQL is accepting connections.              \n"
+            printf "\r${GREEN}[OK]${NC} PostgreSQL is ready.                      \n"
             break
         fi
         sleep 3
     done
-    $db_ok || { echo ""; warn "DB slow to start. Check: elblasy logs ${INSTANCE_NAME}"; }
+    $db_ok || { echo ""; warn "DB slow to start. Run: elblasy logs ${INSTANCE_NAME}"; }
 
-    # Verify pgvector
     if $db_ok; then
         local vec
         vec=$(docker exec -i "db_${INSTANCE_NAME}" \
@@ -675,33 +724,33 @@ start_and_verify() {
             -tAc "SELECT count(*) FROM pg_extension WHERE extname='vector';" 2>/dev/null \
             | tr -d '[:space:]' || echo "0")
         if [[ "${vec:-0}" -ge 1 ]]; then
-            success "pgvector AI vector extension is ACTIVE on PostgreSQL 17!"
+            success "pgvector AI extension is ACTIVE on PostgreSQL 17!"
         else
-            warn "pgvector not confirmed yet — init-db script may still be running."
+            warn "pgvector not confirmed yet — init script may still be running."
         fi
     fi
 
     # Wait for Odoo HTTP
     echo ""
-    info "Waiting for Odoo web service on port ${HTTP_PORT}..."
+    info "Waiting for Odoo HTTP on port ${HTTP_PORT}..."
     local odoo_ok=false
     for i in $(seq 1 50); do
         printf "\r${CYAN}[%02d/50]${NC} Probing http://127.0.0.1:${HTTP_PORT} ..." "$i"
         local code
-        code=$(curl -s -o /dev/null -w "%{http_code}" \
+        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 \
             "http://127.0.0.1:${HTTP_PORT}/web/health" 2>/dev/null \
-            || curl -s -o /dev/null -w "%{http_code}" \
+            || curl -s -o /dev/null -w "%{http_code}" --max-time 2 \
             "http://127.0.0.1:${HTTP_PORT}" 2>/dev/null || echo "000")
         if [[ "$code" =~ ^(200|302|303|404)$ ]]; then
             odoo_ok=true
-            printf "\r${GREEN}[OK]${NC} Odoo HTTP responded: HTTP ${code}                    \n"
+            printf "\r${GREEN}[OK]${NC} Odoo HTTP up — HTTP ${code}                          \n"
             break
         fi
         sleep 3
     done
     $odoo_ok || {
         echo ""
-        info "Odoo is still initializing. Normal for a fresh instance (DB schema creation)."
+        info "Odoo is initializing its database schema (normal for fresh instance)."
         info "Monitor: ${CYAN}elblasy logs ${INSTANCE_NAME}${NC}"
     }
 }
@@ -715,33 +764,30 @@ install_cli() {
 
     cat > "${cli_path}" <<'CLI_EOF'
 #!/usr/bin/env bash
-# =============================================================================
-# elblasy-odoo — Multi-Instance Odoo CLI Manager
+# ============================================================================
+# elblasy-odoo — Multi-Instance Odoo Manager
 # Powered by elblasy.app | https://github.com/elblasy33/last-odoo
-# Usage: elblasy [command] [instance_name]
-# =============================================================================
+# ============================================================================
 readonly BASE_DIR="/opt/elblasy-odoo"
 readonly INST_DIR="${BASE_DIR}/instances"
-
 BOLD='\033[1m'; NC='\033[0m'
 GREEN='\033[38;5;46m'; CYAN='\033[38;5;51m'; YELLOW='\033[38;5;220m'
 RED='\033[38;5;196m';  GRAY='\033[38;5;244m'; WHITE='\033[38;5;255m'
 
 usage() {
-    echo -e "${CYAN}${BOLD}elblasy.app — Odoo Multi-Instance CLI${NC}"
+    echo -e "${CYAN}${BOLD}elblasy.app — Odoo Multi-Instance Manager${NC}"
     echo ""
-    echo -e "  ${BOLD}Usage:${NC} elblasy <command> [instance]"
+    echo -e "  Usage: elblasy <command> [instance]"
     echo ""
-    printf "  %-18s %s\n" "list"            "List all instances (status, ports, version)"
-    printf "  %-18s %s\n" "ps"              "Show running Odoo & DB containers"
+    printf "  %-18s %s\n" "list"            "All instances with status, ports & version"
+    printf "  %-18s %s\n" "ps"              "Show running Odoo/DB containers"
     printf "  %-18s %s\n" "start <name>"    "Start an instance"
     printf "  %-18s %s\n" "stop <name>"     "Stop an instance"
     printf "  %-18s %s\n" "restart <name>"  "Restart an instance"
-    printf "  %-18s %s\n" "logs <name>"     "Follow live container logs"
-    printf "  %-18s %s\n" "info <name>"     "Show credentials, URLs & paths"
-    printf "  %-18s %s\n" "backup <name>"   "Create full backup (DB dump + filestore)"
-    printf "  %-18s %s\n" "restore <file>"  "Restore from a backup archive"
-    printf "  %-18s %s\n" "delete <name>"   "Permanently delete instance (asks confirmation)"
+    printf "  %-18s %s\n" "logs <name>"     "Follow live logs"
+    printf "  %-18s %s\n" "info <name>"     "Show credentials, URLs, paths"
+    printf "  %-18s %s\n" "backup <name>"   "Full backup (DB dump + filestore archive)"
+    printf "  %-18s %s\n" "delete <name>"   "Delete instance (with confirmation)"
     echo ""
 }
 
@@ -753,33 +799,32 @@ get_all() {
 require_inst() {
     [[ -n "${1:-}" && -d "${INST_DIR}/${1}" ]] || {
         echo -e "${RED}[ERROR]${NC} Instance '${1:-<none>}' not found."
-        echo "Available instances:"; get_all; exit 1
+        echo "Available:"; get_all; exit 1
     }
 }
 
+ev() { grep -E "^${1}=" "${INST_DIR}/${2}/.env" 2>/dev/null | cut -d= -f2 || echo "?"; }
+
 cmd_list() {
     echo -e "${BOLD}${CYAN}Odoo Instances — elblasy.app${NC}"
-    printf "  %-24s %-10s %-6s %-6s %-8s %s\n" "INSTANCE" "STATUS" "HTTP" "CHAT" "VERSION" "IMAGE"
-    echo -e "${GRAY}  ─────────────────────────────────────────────────────────────────${NC}"
+    printf "  %-24s %-10s %-6s %-6s %-5s %s\n" "INSTANCE" "STATUS" "HTTP" "CHAT" "VER" "IMAGE"
+    echo -e "${GRAY}  ───────────────────────────────────────────────────────────────${NC}"
     local found=0
     for inst in $(get_all); do
-        found=1; local dir="${INST_DIR}/${inst}"
-        local http_p="?" chat_p="?" ver="?" img="?"
-        if [[ -f "${dir}/.env" ]]; then
-            http_p=$(grep -E '^ODOO_HTTP_PORT='  "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-            chat_p=$(grep -E '^ODOO_CHAT_PORT='  "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-            ver=$(grep   -E '^ODOO_VERSION='     "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-            img=$(grep   -E '^ODOO_IMAGE='       "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-        fi
+        found=1
+        local h; h=$(ev ODOO_HTTP_PORT "$inst")
+        local c; c=$(ev ODOO_CHAT_PORT "$inst")
+        local v; v=$(ev ODOO_VERSION "$inst")
+        local i; i=$(ev ODOO_IMAGE "$inst")
         local stat
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^odoo_${inst}$"; then
             stat="${GREEN}Running${NC}"
         else
             stat="${GRAY}Stopped${NC}"
         fi
-        printf "  %-24s %-19b %-6s %-6s %-8s %s\n" "$inst" "$stat" "$http_p" "$chat_p" "$ver" "$img"
+        printf "  %-24s %-19b %-6s %-6s %-5s %s\n" "$inst" "$stat" "$h" "$c" "$v" "$i"
     done
-    [[ $found -eq 0 ]] && echo -e "  ${GRAY}No instances found.${NC}"
+    [[ $found -eq 0 ]] && echo -e "  ${GRAY}No instances. Run the installer to create one.${NC}"
     echo ""
 }
 
@@ -789,40 +834,38 @@ cmd_ps() {
 }
 
 cmd_info() {
-    require_inst "$1"; local dir="${INST_DIR}/$1"
-    echo -e "${BOLD}${CYAN}Instance: $1${NC}"
-    local http_p ver img pg_user admin_pw pg_port
-    http_p=$(grep -E '^ODOO_HTTP_PORT='  "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-    ver=$(grep    -E '^ODOO_VERSION='    "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-    img=$(grep    -E '^ODOO_IMAGE='      "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-    pg_user=$(grep -E '^POSTGRES_USER='  "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-    admin_pw=$(grep -E '^ODOO_ADMIN_PASSWORD=' "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
-    pg_port=$(grep -E '^POSTGRES_EXTERNAL_PORT=' "${dir}/.env" 2>/dev/null | cut -d= -f2 || echo "?")
+    require_inst "$1"
     local sip; sip=$(curl -s -4 --max-time 3 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-    echo -e "  Web URL       : ${CYAN}http://${sip}:${http_p}${NC}"
-    echo -e "  Odoo Version  : ${GREEN}${ver}${NC}  (${img})"
-    echo -e "  Admin Passwd  : ${YELLOW}${admin_pw}${NC}"
-    echo -e "  DB User       : ${pg_user}  |  DB Port: 127.0.0.1:${pg_port}"
-    echo -e "  Config file   : ${dir}/etc/odoo.conf"
-    echo -e "  Custom addons : ${dir}/etc/addons/"
-    echo -e "  Filestore     : ${dir}/data/"
+    local h; h=$(ev ODOO_HTTP_PORT "$1")
+    local v; v=$(ev ODOO_VERSION "$1")
+    local img; img=$(ev ODOO_IMAGE "$1")
+    local pw; pw=$(ev ODOO_ADMIN_PASSWORD "$1")
+    local pg_u; pg_u=$(ev POSTGRES_USER "$1")
+    local pg_p; pg_p=$(ev POSTGRES_EXTERNAL_PORT "$1")
+    local vd; vd=$(ev ODOO_VER_DOT "$1")
+    echo -e "${BOLD}${CYAN}Instance: $1${NC}"
+    echo -e "  Web URL      : ${CYAN}http://${sip}:${h}${NC}"
+    echo -e "  Odoo Version : ${GREEN}${v}${NC}  (${img})"
+    echo -e "  Admin Passwd : ${YELLOW}${pw}${NC}"
+    echo -e "  DB User/Port : ${pg_u}  |  127.0.0.1:${pg_p}"
+    echo -e "  Config       : ${INST_DIR}/$1/etc/odoo.conf"
+    echo -e "  Custom addons: ${INST_DIR}/$1/etc/addons/${vd}/"
+    echo -e "  Filestore    : ${INST_DIR}/$1/data/"
     echo ""
 }
 
 cmd_backup() {
-    require_inst "$1"; local inst="$1"; local dir="${INST_DIR}/${inst}"
-    local bdir="${dir}/backups"; local ts; ts=$(date +%Y%m%d_%H%M%S)
+    require_inst "$1"
+    local bdir="${INST_DIR}/$1/backups"; local ts; ts=$(date +%Y%m%d_%H%M%S)
     mkdir -p "$bdir"
-    local pg_user; pg_user=$(grep -E '^POSTGRES_USER=' "${dir}/.env" | cut -d= -f2)
-    echo -e "${CYAN}Creating backup for ${inst}...${NC}"
+    local pg_u; pg_u=$(ev POSTGRES_USER "$1")
+    echo -e "${CYAN}Backup $1...${NC}"
     local dump="${bdir}/dump_${ts}.sql"
-    docker exec -t "db_${inst}" pg_dumpall -U "${pg_user}" > "${dump}" || {
-        echo -e "${RED}[ERROR]${NC} DB dump failed."; rm -f "${dump}"; exit 1
-    }
-    local archive="${bdir}/backup_${inst}_${ts}.tar.gz"
-    tar -czf "${archive}" -C "${dir}" data etc backups/$(basename "${dump}")
+    docker exec -t "db_$1" pg_dumpall -U "${pg_u}" > "${dump}" || { rm -f "${dump}"; echo -e "${RED}Dump failed.${NC}"; exit 1; }
+    local arc="${bdir}/backup_$1_${ts}.tar.gz"
+    tar -czf "${arc}" -C "${INST_DIR}/$1" data etc backups/$(basename "${dump}")
     rm -f "${dump}"
-    echo -e "${GREEN}[OK]${NC} Backup: ${archive}"
+    echo -e "${GREEN}[OK]${NC} ${arc}"
 }
 
 ACTION="${1:-}"; INST="${2:-}"
@@ -832,7 +875,7 @@ case "$ACTION" in
     start)    require_inst "$INST"; (cd "${INST_DIR}/${INST}" && docker compose up -d) ;;
     stop)     require_inst "$INST"; (cd "${INST_DIR}/${INST}" && docker compose stop) ;;
     restart)  require_inst "$INST"; (cd "${INST_DIR}/${INST}" && docker compose restart) ;;
-    logs)     require_inst "$INST"; (cd "${INST_DIR}/${INST}" && docker compose logs -f --tail=150) ;;
+    logs)     require_inst "$INST"; (cd "${INST_DIR}/${INST}" && docker compose logs -f --tail=200) ;;
     info)     cmd_info "$INST" ;;
     backup)   cmd_backup "$INST" ;;
     delete)
@@ -844,7 +887,7 @@ case "$ACTION" in
         if [[ "$local_confirm" == "yes" ]]; then
             (cd "${INST_DIR}/${INST}" && docker compose down -v) 2>/dev/null || true
             rm -rf "${INST_DIR:?}/${INST}"
-            echo -e "${GREEN}[OK]${NC} Instance '${INST}' deleted."
+            echo -e "${GREEN}[OK]${NC} '${INST}' deleted."
         else
             echo "Cancelled."
         fi
@@ -855,11 +898,11 @@ CLI_EOF
 
     chmod +x "${cli_path}"
     ln -sf "${cli_path}" "${GLOBAL_BIN}/${CLI_ALIAS}"
-    success "CLI ready: ${BOLD}${CLI_ALIAS}${NC} and ${DIM}${CLI_NAME}${NC}. Try: ${CYAN}elblasy list${NC}"
+    success "CLI ready: ${BOLD}elblasy${NC} and ${DIM}elblasy-odoo${NC}"
 }
 
 # ------------------------------------------------------------------------------
-# Summary
+# Final Summary
 # ------------------------------------------------------------------------------
 display_summary() {
     local server_ip
@@ -869,32 +912,36 @@ display_summary() {
 
     echo ""
     echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}${BOLD}║         Odoo Instance Deployed Successfully — AI Ready!                    ║${NC}"
+    echo -e "${GREEN}${BOLD}║       Odoo Instance Deployed Successfully — AI Ready!                      ║${NC}"
     echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  🏢  ${BOLD}Provider         :${NC} elblasy.app"
     echo -e "  🏷   ${BOLD}Instance Name    :${NC} ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
     echo -e "  📦  ${BOLD}Odoo Version     :${NC} ${GREEN}Odoo ${ODOO_VERSION}${NC}  (${CYAN}${ODOO_IMAGE}${NC})"
     echo -e "  🌐  ${BOLD}Web URL          :${NC} ${CYAN}http://${server_ip}:${HTTP_PORT}${NC}"
-    echo -e "  💬  ${BOLD}Longpolling      :${NC} ${CYAN}:${CHAT_PORT}${NC}"
-    echo -e "  🐘  ${BOLD}Database         :${NC} ${PURPLE}PostgreSQL 17 + pgvector (AI Vector Ready)${NC}"
+    echo -e "  💬  ${BOLD}Chat/Longpoll    :${NC} ${CYAN}:${CHAT_PORT}${NC}"
+    echo -e "  🐘  ${BOLD}PostgreSQL       :${NC} ${PURPLE}17 + pgvector  (AI Vector Ready)${NC}"
     echo -e "  🔑  ${BOLD}Master Password  :${NC} ${YELLOW}${BOLD}${ODOO_ADMIN_PASSWORD}${NC}"
     echo ""
     echo -e "  📁  ${BOLD}Instance Root    :${NC} ${TARGET_DIR}/"
-    echo -e "  ⚙   ${BOLD}Config File      :${NC} ${TARGET_DIR}/etc/odoo.conf"
+    echo -e "  ⚙   ${BOLD}Config           :${NC} ${TARGET_DIR}/etc/odoo.conf"
     echo -e "  🧩  ${BOLD}Custom Addons    :${NC} ${TARGET_DIR}/etc/addons/${ODOO_VER_DOT}/"
-    echo -e "      ${DIM}(drop your modules here → auto-mapped to /mnt/extra-addons/${ODOO_VER_DOT} inside container)${NC}"
+    echo -e "      ${DIM}→ Drop modules here → auto-mapped to /mnt/extra-addons/${ODOO_VER_DOT}/${NC}"
     echo -e "  💾  ${BOLD}Filestore        :${NC} ${TARGET_DIR}/data/"
     echo -e "  📋  ${BOLD}Install Log      :${NC} ${INSTALL_LOG}"
     echo ""
-    echo -e "${B2}${BOLD}  Multi-Instance:${NC} Run this script again to deploy additional isolated instances."
+    echo -e "${B2}${BOLD}  Multi-Instance:${NC} Run this script again for a 2nd instance. Ports auto-selected."
     echo ""
-    echo -e "${B3}${BOLD}  CLI Quick Reference:${NC}"
-    echo -e "    ${CYAN}elblasy list${NC}                     — all instances"
-    echo -e "    ${CYAN}elblasy logs ${INSTANCE_NAME}${NC}    — live logs"
-    echo -e "    ${CYAN}elblasy restart ${INSTANCE_NAME}${NC} — restart"
-    echo -e "    ${CYAN}elblasy backup ${INSTANCE_NAME}${NC}  — full backup"
-    echo -e "    ${CYAN}elblasy info ${INSTANCE_NAME}${NC}    — credentials & URLs"
+    echo -e "${B3}${BOLD}  Port Scheme Reference:${NC}"
+    echo -e "    Odoo 16: HTTP ${CYAN}8016${NC} | Chat ${CYAN}9016${NC} | DB ${CYAN}5406${NC}"
+    echo -e "    Odoo 17: HTTP ${CYAN}8017${NC} | Chat ${CYAN}9017${NC} | DB ${CYAN}5407${NC}"
+    echo -e "    Odoo 18: HTTP ${CYAN}8018${NC} | Chat ${CYAN}9018${NC} | DB ${CYAN}5408${NC}"
+    echo -e "    Odoo 19: HTTP ${CYAN}8019${NC} | Chat ${CYAN}9019${NC} | DB ${CYAN}5409${NC}"
+    echo -e "    Odoo 20: HTTP ${CYAN}8020${NC} | Chat ${CYAN}9020${NC} | DB ${CYAN}5410${NC}"
+    echo -e "    2nd instance: +10 (e.g. Odoo 20 #2 → ${CYAN}8030${NC})"
+    echo ""
+    echo -e "${B3}${BOLD}  CLI:${NC}"
+    echo -e "    ${CYAN}elblasy list${NC}  |  ${CYAN}elblasy logs ${INSTANCE_NAME}${NC}  |  ${CYAN}elblasy info ${INSTANCE_NAME}${NC}"
     echo ""
     echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════════════${NC}"
 }
