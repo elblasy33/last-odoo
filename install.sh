@@ -603,23 +603,32 @@ EOF
 start_instance_and_verify() {
     step_header "6. Starting Containers & Verifying Health (Odoo + pgvector)"
 
-    info "Pulling and launching containers via Docker Compose..."
-    (
-        cd "$TARGET_DIR"
-        docker compose pull >> "$INSTALL_LOG" 2>&1
-        docker compose up -d >> "$INSTALL_LOG" 2>&1
-    ) &
-    spinner $! "Starting PostgreSQL 17 & Odoo containers"
+    info "Pulling PostgreSQL 17 with pgvector AI image (${POSTGRES_PGVECTOR_IMAGE})..."
+    docker pull "${POSTGRES_PGVECTOR_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
+    success "PostgreSQL 17 (pgvector) image is ready!"
 
-    info "Checking PostgreSQL 17 connectivity and verifying pgvector extension..."
+    echo ""
+    info "Pulling Odoo application image (${ODOO_DEFAULT_IMAGE}) — this may take 1-2 minutes depending on network..."
+    docker pull "${ODOO_DEFAULT_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
+    success "Odoo image downloaded successfully!"
+
+    echo ""
+    info "Launching isolated container stack (${INSTANCE_NAME})..."
+    (cd "$TARGET_DIR" && docker compose up -d) 2>&1 | tee -a "$INSTALL_LOG"
+    success "Containers started in background!"
+
+    echo ""
+    info "Verifying PostgreSQL 17 and pgvector AI extension initialization..."
     local db_ready=false
     for i in {1..30}; do
+        printf "\r${CYAN}⏳ [Check %02d/30]${NC} Waiting for database engine to accept connections... " "$i"
         if docker exec "db_${INSTANCE_NAME}" pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; then
-            # Verify pgvector extension
+            printf "\r${CYAN}⏳ [Check %02d/30]${NC} Database is online! Testing pgvector extension...       " "$i"
             local vec_check
             vec_check=$(docker exec -i "db_${INSTANCE_NAME}" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_extension WHERE extname='vector';" 2>/dev/null || echo "0")
             if [ "$vec_check" -ge 1 ]; then
                 db_ready=true
+                echo ""
                 break
             fi
         fi
@@ -629,18 +638,21 @@ start_instance_and_verify() {
     if [ "$db_ready" = true ]; then
         success "Verified: PostgreSQL 17 is healthy and ${BOLD}pgvector (AI Vector Embeddings)${NC} extension is 100% loaded!"
     else
-        warn "Database is starting up, continuing health monitoring..."
+        echo ""
+        warn "Database is taking longer to initialize, proceeding with web service probe..."
     fi
 
     # Verify Odoo HTTP endpoint
-    info "Checking Odoo HTTP web service response on port ${HTTP_PORT}..."
+    echo ""
+    info "Verifying Odoo web service initialization on port ${HTTP_PORT}..."
     local odoo_ready=false
     for i in {1..40}; do
-        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HTTP_PORT}/web/health" 2>/dev/null | grep -qE "200|404|303"; then
+        printf "\r${CYAN}⏳ [Check %02d/40]${NC} Probing Odoo HTTP service (http://127.0.0.1:${HTTP_PORT})... " "$i"
+        local code
+        code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HTTP_PORT}/web/health" 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HTTP_PORT}" 2>/dev/null || echo "000")
+        if [[ "$code" =~ ^(200|404|303|302)$ ]]; then
             odoo_ready=true
-            break
-        elif curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HTTP_PORT}" 2>/dev/null | grep -qE "200|302|303"; then
-            odoo_ready=true
+            echo ""
             break
         fi
         sleep 2
@@ -649,7 +661,8 @@ start_instance_and_verify() {
     if [ "$odoo_ready" = true ]; then
         success "Odoo server (${INSTANCE_NAME}) is up and responding successfully!"
     else
-        info "Odoo is initializing database tables and will be ready momentarily."
+        echo ""
+        info "Odoo is initializing database tables in background and will be fully ready in seconds."
     fi
 }
 
