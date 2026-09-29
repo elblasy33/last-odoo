@@ -86,11 +86,11 @@ log_to_file() {
 print_banner() {
     clear
     cat << "EOF"
-[38;5;99m   ______  __      ____  __       ___    _______  __    [38;5;51m     ___     ____  ____ 
-[38;5;105m  / ____/ / /     / __ )/ /      /   |  / ___/\ \/ /    [38;5;51m    /   |   / __ \/ __ \
-[38;5;75m / __/   / /     / __  / /      / /| |  \__ \  \  /     [38;5;51m   / /| |  / /_/ / /_/ /
-[38;5;45m/ /___  / /___  / /_/ / /___   / ___ | ___/ /  / /      [38;5;51m  / ___ | / ____/ ____/ 
-[38;5;51m\____/ /_____/ /_____/_____/  /_/  |_|/____/  /_/       [38;5;51m /_/  |_|/_/   /_/      
+ [38;5;99m   ______  __      ____  __       ___    _______  __     [38;5;51m     ___     ____  ____ 
+ [38;5;105m  / ____/ / /     / __ )/ /      /   |  / ___/\ \/ /     [38;5;51m    /   |   / __ \/ __ \
+ [38;5;75m / __/   / /     / __  / /      / /| |  \__ \  \  /      [38;5;51m   / /| |  / /_/ / /_/ /
+ [38;5;45m/ /___  / /___  / /_/ / /___   / ___ | ___/ /  / /       [38;5;51m  / ___ | / ____/ ____/ 
+ [38;5;51m\____/ /_____/ /_____/_____/  /_/  |_|/____/  /_/        [38;5;51m /_/  |_|/_/   /_/      
 EOF
     echo -e "${B2}${BOLD}  ╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${B2}${BOLD}  ║${WHITE}  Enterprise Odoo + PostgreSQL 17 (pgvector) Multi-Instance Installer     ${B2}║${NC}"
@@ -147,7 +147,7 @@ spinner() {
 # ------------------------------------------------------------------------------
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "هذا الاسكريبت يتطلب صلاحيات root! يرجى إعادة التشغيل باستخدام: sudo bash $0"
+        error "This script requires root privileges! Please rerun using: sudo bash $0"
         exit 1
     fi
 }
@@ -158,18 +158,18 @@ check_os() {
         OS_NAME=$NAME
         OS_VER=$VERSION_ID
     else
-        error "تعذر تحديد نظام التشغيل. هذا الاسكريبت مصمم لأنظمة Ubuntu / Debian."
+        error "Unable to detect operating system. This script is designed for Ubuntu / Debian."
         exit 1
     fi
 
     if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
-        warn "نظام التشغيل المكتشف: $OS_NAME. الاسكريبت مصمم ومختبر على Ubuntu/Debian."
-        read -p "هل ترغب في المتابعة على أية حال؟ (y/n): " proceed
+        warn "Detected OS: $OS_NAME. This script is built and tested for Ubuntu / Debian."
+        read -p "Do you want to proceed anyway? (y/n): " proceed
         if [[ "$proceed" != "y" && "$proceed" != "Y" ]]; then
             exit 1
         fi
     else
-        info "نظام التشغيل متوافق: ${BOLD}$OS_NAME $OS_VER${NC}"
+        info "Operating System is compatible: ${BOLD}$OS_NAME $OS_VER${NC}"
     fi
 }
 
@@ -205,7 +205,7 @@ find_next_free_port() {
 # Docker & Compose Engine Setup
 # ------------------------------------------------------------------------------
 install_docker_prerequisites() {
-    step_header "1. التحقق من Docker ومحرك الحاويات (Docker & Compose Engine)"
+    step_header "1. Verifying Docker & Container Engine (Docker & Compose V2)"
 
     local need_docker=false
     if ! command -v docker &> /dev/null; then
@@ -217,7 +217,7 @@ install_docker_prerequisites() {
     fi
 
     if [ "$need_docker" = true ]; then
-        info "جاري تثبيت وتحديث محرك Docker و Docker Compose الحديث..."
+        info "Installing and updating Docker Engine & Docker Compose V2..."
         (
             apt-get update -y >> "$INSTALL_LOG" 2>&1
             apt-get install -y ca-certificates curl gnupg lsb-release jq ufw >> "$INSTALL_LOG" 2>&1
@@ -232,10 +232,10 @@ install_docker_prerequisites() {
             systemctl enable docker >> "$INSTALL_LOG" 2>&1
             systemctl start docker >> "$INSTALL_LOG" 2>&1
         ) &
-        spinner $! "تثبيت Docker Engine و Docker Compose V2"
-        success "تم تثبيت محرك Docker بنجاح!"
+        spinner $! "Installing Docker Engine & Docker Compose V2"
+        success "Docker Engine & Docker Compose V2 installed successfully!"
     else
-        success "محرك Docker و Docker Compose متوفران وجاهزان للعمل!"
+        success "Docker Engine and Docker Compose are already installed and ready!"
     fi
 }
 
@@ -247,22 +247,22 @@ list_existing_instances() {
         local count
         count=$(find "$INSTANCES_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
         if [ "$count" -gt 0 ]; then
-            echo -e "${YELLOW}${BOLD}النسخ الحالية المثبتة على هذا السيرفر:${NC}"
+            echo -e "${YELLOW}${BOLD}Existing Odoo instances on this server:${NC}"
             for inst in "$INSTANCES_DIR"/*; do
                 if [ -d "$inst" ]; then
                     local name
                     name=$(basename "$inst")
-                    local http_p="غير معروف"
-                    local status="متوقفة"
+                    local http_p="Unknown"
+                    local status="Stopped"
                     if [ -f "$inst/.env" ]; then
                         http_p=$(grep -E '^ODOO_HTTP_PORT=' "$inst/.env" | cut -d '=' -f2 || echo "8069")
                     fi
                     if docker ps --format '{{.Names}}' | grep -q "odoo_${name}"; then
-                        status="${GREEN}نشطة (Running)${NC}"
+                        status="${GREEN}Running${NC}"
                     else
-                        status="${GRAY}متوقفة (Stopped)${NC}"
+                        status="${GRAY}Stopped${NC}"
                     fi
-                    echo -e "  • ${BOLD}${name}${NC} | بورت الويب: ${CYAN}${http_p}${NC} | الحالة: ${status}"
+                    echo -e "  • ${BOLD}${name}${NC} | HTTP Port: ${CYAN}${http_p}${NC} | Status: ${status}"
                 fi
             done
             echo ""
@@ -321,7 +321,7 @@ calculate_postgres_tuning() {
 # Instance Creation Wizard
 # ------------------------------------------------------------------------------
 setup_instance_details() {
-    step_header "2. تخصيص إعدادات نسخة Odoo الجديدة (Multi-Tenancy Setup)"
+    step_header "2. Customizing New Odoo Instance (Multi-Tenancy Setup)"
 
     mkdir -p "$INSTANCES_DIR"
     list_existing_instances
@@ -329,8 +329,8 @@ setup_instance_details() {
     local default_name
     default_name=$(generate_unique_instance_name)
 
-    echo -e "${WHITE}أدخل اسماً مميزاً للنسخة الجديدة (اتركه فارغاً لاستخدام الافتراضي: ${CYAN}${default_name}${WHITE}):${NC}"
-    read -p "اسم النسخة [Instance Name]: " INPUT_INSTANCE_NAME
+    echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
+    read -p "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME
     INSTANCE_NAME=${INPUT_INSTANCE_NAME:-$default_name}
     # Sanitize instance name (lowercase, alphanumeric, dashes)
     INSTANCE_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
@@ -342,37 +342,36 @@ setup_instance_details() {
     TARGET_DIR="${INSTANCES_DIR}/${INSTANCE_NAME}"
 
     if [ -d "$TARGET_DIR" ]; then
-        error "المجلد $TARGET_DIR موجود بالفعل! هناك نسخة بنفس الاسم."
-        echo -e "${YELLOW}اختر اسماً آخر أو احذف النسخة السابقة باستخدام:${NC} ${BOLD}elblasy-odoo delete ${INSTANCE_NAME}${NC}"
+        error "Directory $TARGET_DIR already exists! An instance with this name already exists."
+        echo -e "${YELLOW}Choose a different name or remove previous instance using:${NC} ${BOLD}elblasy delete ${INSTANCE_NAME}${NC}"
         exit 1
     fi
 
-    info "سيتم إنشاء النسخة في المسار المعزول: ${BOLD}${TARGET_DIR}${NC}"
+    info "Instance will be deployed in isolated path: ${BOLD}${TARGET_DIR}${NC}"
 
     # Auto-detect ports without conflict!
-    step_header "3. فحص وحجز البورتات المتاحة تلقائياً (Smart Port Hunter)"
+    step_header "3. Scanning & Allocating Free Ports (Smart Port Hunter)"
 
-    info "فحص بورت الويب الافتراضي (8069)..."
+    info "Checking default HTTP web port (8069)..."
     HTTP_PORT=$(find_next_free_port 8069)
     if [ "$HTTP_PORT" -ne 8069 ]; then
-        warn "البورت 8069 مستخدم مسبقاً! تم تخصيص البورت البديل الحر: ${BOLD}${CYAN}${HTTP_PORT}${NC}"
+        warn "Port 8069 is in use! Automatically assigned next available port: ${BOLD}${CYAN}${HTTP_PORT}${NC}"
     else
-        success "تم حجز بورت الويب الافتراضي: ${BOLD}${CYAN}${HTTP_PORT}${NC}"
+        success "Allocated HTTP web port: ${BOLD}${CYAN}${HTTP_PORT}${NC}"
     fi
 
-    info "فحص بورت الشات والـ Longpolling (8072)..."
-    # Ensure longpolling port is after HTTP_PORT and not in use
+    info "Checking longpolling / chat port (8072)..."
     local start_lp=$((HTTP_PORT + 3))
     if ! is_port_in_use 8072 && [ "$HTTP_PORT" -ne 8072 ]; then
         CHAT_PORT=8072
     else
         CHAT_PORT=$(find_next_free_port "$start_lp")
     fi
-    success "تم تخصيص بورت الـ Longpolling: ${BOLD}${CYAN}${CHAT_PORT}${NC}"
+    success "Allocated longpolling / chat port: ${BOLD}${CYAN}${CHAT_PORT}${NC}"
 
-    info "فحص بورت قاعدة البيانات الخارجي (اختياري للاتصال الخارجي)..."
+    info "Checking PostgreSQL direct host port (5432)..."
     DB_PORT=$(find_next_free_port 5432)
-    success "تم تخصيص بورت PostgreSQL المباشر: ${BOLD}${CYAN}${DB_PORT}${NC}"
+    success "Allocated PostgreSQL direct port: ${BOLD}${CYAN}${DB_PORT}${NC}"
 
     # Security Credentials Generation
     POSTGRES_USER="odoo_${INSTANCE_NAME//-/_}"
@@ -383,13 +382,13 @@ setup_instance_details() {
     calculate_postgres_tuning
 
     echo ""
-    echo -e "${B3}${BOLD}  ملخص إعدادات النسخة الجديدة:${NC}"
-    echo -e "  • اسم النسخة (Instance)   : ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
-    echo -e "  • بورت واجهة Odoo (HTTP)   : ${CYAN}${BOLD}${HTTP_PORT}${NC}"
-    echo -e "  • بورت الـ Longpolling     : ${CYAN}${BOLD}${CHAT_PORT}${NC}"
-    echo -e "  • بورت قاعدة البيانات (PG) : ${CYAN}${BOLD}${DB_PORT}${NC}"
-    echo -e "  • Odoo Workers المحسوبة    : ${GREEN}${BOLD}${WORKERS_COUNT}${NC} (وفقاً للعتاد)"
-    echo -e "  • محرك الذكاء الاصطناعي   : ${PURPLE}${BOLD}pgvector/pgvector:pg17 (PostgreSQL 17 + Vector Embeddings)${NC}"
+    echo -e "${B3}${BOLD}  Instance Configuration Summary:${NC}"
+    echo -e "  • Instance Name            : ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
+    echo -e "  • Odoo Web Port (HTTP)     : ${CYAN}${BOLD}${HTTP_PORT}${NC}"
+    echo -e "  • Longpolling Port (Chat)  : ${CYAN}${BOLD}${CHAT_PORT}${NC}"
+    echo -e "  • Database Port (PG Host)  : ${CYAN}${BOLD}${DB_PORT}${NC}"
+    echo -e "  • Odoo Workers (Calculated): ${GREEN}${BOLD}${WORKERS_COUNT}${NC} (Hardware optimized)"
+    echo -e "  • AI Vector Engine         : ${PURPLE}${BOLD}pgvector/pgvector:pg17 (PostgreSQL 17 + Vector Embeddings)${NC}"
     echo ""
 }
 
@@ -397,7 +396,7 @@ setup_instance_details() {
 # Directory Structure Creation
 # ------------------------------------------------------------------------------
 create_instance_filesystem() {
-    step_header "4. بناء هيكل المجلدات المعزول في /opt (${INSTANCE_NAME})"
+    step_header "4. Creating Isolated Directory Structure in /opt (${INSTANCE_NAME})"
 
     (
         mkdir -p "${TARGET_DIR}/config"
@@ -414,15 +413,15 @@ create_instance_filesystem() {
         chown -R 101:101 "${TARGET_DIR}/logs"
         chmod -R 775 "${TARGET_DIR}/custom_addons"
     ) &
-    spinner $! "إنشاء المجلدات وضبط الصلاحيات الأمنية"
-    success "تم إنشاء المجلدات بنجاح في ${TARGET_DIR}"
+    spinner $! "Creating folders and applying security permissions"
+    success "Directories created successfully in ${TARGET_DIR}"
 }
 
 # ------------------------------------------------------------------------------
 # Configuration Generation (odoo.conf, docker-compose.yml, init-db)
 # ------------------------------------------------------------------------------
 generate_configurations() {
-    step_header "5. توليد ملفات التكوين والربط مع PostgreSQL 17 و pgvector"
+    step_header "5. Generating Configurations & Wiring PostgreSQL 17 (pgvector)"
 
     # 1. Generate pgvector auto-initialization script for PostgreSQL 17
     cat << EOF > "${TARGET_DIR}/init-db/01-init-pgvector.sql"
@@ -572,24 +571,24 @@ networks:
     driver: bridge
 EOF
 
-    success "تم توليد ملفات التكوين بنجاح مع ربط pgvector وحماية كلمات السر!"
+    success "Configurations generated successfully with pgvector support and secure credentials!"
 }
 
 # ------------------------------------------------------------------------------
 # Launch & Health Verification
 # ------------------------------------------------------------------------------
 start_instance_and_verify() {
-    step_header "6. تشغيل الحاويات والتحقق من جاهزية Odoo و pgvector"
+    step_header "6. Starting Containers & Verifying Health (Odoo + pgvector)"
 
-    info "سحب وبناء الحاويات عبر Docker Compose..."
+    info "Pulling and launching containers via Docker Compose..."
     (
         cd "$TARGET_DIR"
         docker compose pull >> "$INSTALL_LOG" 2>&1
         docker compose up -d >> "$INSTALL_LOG" 2>&1
     ) &
-    spinner $! "بدء تشغيل حاويات PostgreSQL 17 و Odoo"
+    spinner $! "Starting PostgreSQL 17 & Odoo containers"
 
-    info "فحص صحة اتصال PostgreSQL 17 وتفعيل امتداد pgvector..."
+    info "Checking PostgreSQL 17 connectivity and verifying pgvector extension..."
     local db_ready=false
     for i in {1..30}; do
         if docker exec "db_${INSTANCE_NAME}" pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; then
@@ -605,13 +604,13 @@ start_instance_and_verify() {
     done
 
     if [ "$db_ready" = true ]; then
-        success "تم التحقق: PostgreSQL 17 جاهز و امتداد ${BOLD}pgvector (AI Vector Embeddings)${NC} مفعل 100%!"
+        success "Verified: PostgreSQL 17 is healthy and ${BOLD}pgvector (AI Vector Embeddings)${NC} extension is 100% loaded!"
     else
-        warn "قاعدة البيانات قيد الإقلاع، جاري المتابعة..."
+        warn "Database is starting up, continuing health monitoring..."
     fi
 
     # Verify Odoo HTTP endpoint
-    info "فحص استجابة سيرفر Odoo على البورت ${HTTP_PORT}..."
+    info "Checking Odoo HTTP web service response on port ${HTTP_PORT}..."
     local odoo_ready=false
     for i in {1..40}; do
         if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${HTTP_PORT}/web/health" 2>/dev/null | grep -qE "200|404|303"; then
@@ -625,9 +624,9 @@ start_instance_and_verify() {
     done
 
     if [ "$odoo_ready" = true ]; then
-        success "سيرفر Odoo (${INSTANCE_NAME}) يعمل ويستجيب بنجاح!"
+        success "Odoo server (${INSTANCE_NAME}) is up and responding successfully!"
     else
-        info "سيرفر Odoo يقوم بتهيئة قواعد البيانات وسيكون متاحاً خلال لحظات."
+        info "Odoo is initializing database tables and will be ready momentarily."
     fi
 }
 
@@ -635,7 +634,7 @@ start_instance_and_verify() {
 # Install Global Management CLI (elblasy-odoo)
 # ------------------------------------------------------------------------------
 install_management_cli() {
-    step_header "7. تثبيت أداة التحكم السريعة للمشرفين (${CLI_ALIAS})"
+    step_header "7. Installing Global CLI Management Tool (${CLI_ALIAS})"
 
     local cli_path="${GLOBAL_BIN_DIR}/${CLI_NAME}"
     cat << 'EOF' > "$cli_path"
@@ -656,17 +655,17 @@ NC='\033[0m'
 
 show_help() {
     echo -e "${CYAN}${BOLD}elblasy.app — Odoo Multi-Instance CLI Manager${NC}"
-    echo "الاستخدام: elblasy-odoo [الأمر] [اسم_النسخة]"
+    echo "Usage: elblasy [command] [instance_name]"
     echo ""
-    echo "الأوامر المتاحة:"
-    echo "  list                     عرض جميع نسخ Odoo المثبتة وحالتها والبورتات"
-    echo "  start   <instance>       تشغيل نسخة معينة"
-    echo "  stop    <instance>       إيقاف نسخة معينة"
-    echo "  restart <instance>       إعادة تشغيل نسخة معينة"
-    echo "  logs    <instance>       عرض السجلات الحية لنسخة معينة"
-    echo "  backup  <instance>       أخذ نسخة احتياطية كاملة (DB + Filestore)"
-    echo "  info    <instance>       عرض تفاصيل وكلمات سر ومسارات النسخة"
-    echo "  delete  <instance>       حذف النسخة وحاوياتها بأمان"
+    echo "Available Commands:"
+    echo "  list                     List all installed Odoo instances and status"
+    echo "  start   <instance>       Start a specific instance"
+    echo "  stop    <instance>       Stop a specific instance"
+    echo "  restart <instance>       Restart a specific instance"
+    echo "  logs    <instance>       View live logs for an instance"
+    echo "  backup  <instance>       Create a full backup (DB + Filestore)"
+    echo "  info    <instance>       Display instance configuration and passwords"
+    echo "  delete  <instance>       Safely delete an instance and its containers"
     echo ""
 }
 
@@ -679,7 +678,7 @@ get_instances() {
 }
 
 cmd_list() {
-    echo -e "${BOLD}${CYAN}قائمة نسخ Odoo على السيرفر (elblasy.app):${NC}"
+    echo -e "${BOLD}${CYAN}Installed Odoo Instances on Server (elblasy.app):${NC}"
     printf "%-18s %-12s %-10s %-10s %-25s\n" "INSTANCE" "STATUS" "HTTP PORT" "CHAT PORT" "PATH"
     echo "--------------------------------------------------------------------------------"
     for inst in $(get_instances); do
@@ -702,8 +701,8 @@ cmd_list() {
 verify_inst() {
     local inst=$1
     if [ -z "$inst" ] || [ ! -d "${INSTANCES_DIR}/${inst}" ]; then
-        echo -e "${RED}[ERROR] النسخة '${inst}' غير موجودة!${NC}"
-        echo "النسخ المتاحة هي:"
+        echo -e "${RED}[ERROR] Instance '${inst}' not found!${NC}"
+        echo "Available instances are:"
         get_instances
         exit 1
     fi
@@ -718,17 +717,17 @@ case "$ACTION" in
         ;;
     start)
         verify_inst "$TARGET"
-        echo -e "${CYAN}جاري تشغيل النسخة ${TARGET}...${NC}"
+        echo -e "${CYAN}Starting instance ${TARGET}...${NC}"
         cd "${INSTANCES_DIR}/${TARGET}" && docker compose up -d
         ;;
     stop)
         verify_inst "$TARGET"
-        echo -e "${YELLOW}جاري إيقاف النسخة ${TARGET}...${NC}"
+        echo -e "${YELLOW}Stopping instance ${TARGET}...${NC}"
         cd "${INSTANCES_DIR}/${TARGET}" && docker compose stop
         ;;
     restart)
         verify_inst "$TARGET"
-        echo -e "${CYAN}جاري إعادة تشغيل النسخة ${TARGET}...${NC}"
+        echo -e "${CYAN}Restarting instance ${TARGET}...${NC}"
         cd "${INSTANCES_DIR}/${TARGET}" && docker compose restart
         ;;
     logs)
@@ -738,11 +737,11 @@ case "$ACTION" in
     info)
         verify_inst "$TARGET"
         dir="${INSTANCES_DIR}/${TARGET}"
-        echo -e "${BOLD}${CYAN}=== تفاصيل النسخة: ${TARGET} ===${NC}"
+        echo -e "${BOLD}${CYAN}=== Instance Details: ${TARGET} ===${NC}"
         cat "$dir/.env"
         echo ""
-        echo "مسار الإضافات المخصصة (Custom Addons): ${dir}/custom_addons"
-        echo "مسار السجلات (Logs): ${dir}/logs"
+        echo "Custom Addons Path: ${dir}/custom_addons"
+        echo "Logs Path: ${dir}/logs"
         ;;
     backup)
         verify_inst "$TARGET"
@@ -751,25 +750,25 @@ case "$ACTION" in
         mkdir -p "$bdir"
         ts=$(date +%Y%m%d_%H%M%S)
         bfile="${bdir}/backup_${TARGET}_${ts}.tar.gz"
-        echo -e "${CYAN}جاري إنشاء نسخة احتياطية للنسخة ${TARGET}...${NC}"
+        echo -e "${CYAN}Creating complete backup for instance ${TARGET}...${NC}"
         
         # Source credentials
         eval $(grep -E '^POSTGRES_USER=|^POSTGRES_DB=' "$dir/.env")
         docker exec -t "db_${TARGET}" pg_dumpall -U "$POSTGRES_USER" > "${dir}/backups/dump_${ts}.sql"
         tar -czf "$bfile" -C "$dir" data config/odoo.conf "backups/dump_${ts}.sql"
         rm -f "${dir}/backups/dump_${ts}.sql"
-        echo -e "${GREEN}✓ تم إنشاء النسخة الاحتياطية بنجاح:${NC} ${bfile}"
+        echo -e "${GREEN}✓ Backup created successfully:${NC} ${bfile}"
         ;;
     delete)
         verify_inst "$TARGET"
-        read -p "هل أنت متأكد تماماً من رغبتك في حذف النسخة '${TARGET}' وجميع بياناتها؟ (اكتب 'yes' للتأكيد): " confirm
+        read -p "Are you absolutely sure you want to delete instance '${TARGET}' and all its data? (type 'yes' to confirm): " confirm
         if [ "$confirm" == "yes" ]; then
-            echo -e "${RED}جاري إيقاف وحذف الحاويات والبيانات...${NC}"
+            echo -e "${RED}Stopping and removing containers, volumes and files...${NC}"
             cd "${INSTANCES_DIR}/${TARGET}" && docker compose down -v
             rm -rf "${INSTANCES_DIR}/${TARGET}"
-            echo -e "${GREEN}تم حذف النسخة ${TARGET} بنجاح.${NC}"
+            echo -e "${GREEN}Instance ${TARGET} deleted successfully.${NC}"
         else
-            echo "تم إلغاء عملية الحذف."
+            echo "Deletion cancelled."
         fi
         ;;
     *)
@@ -779,7 +778,7 @@ esac
 EOF
     chmod +x "$cli_path"
     ln -sf "$cli_path" "${GLOBAL_BIN_DIR}/${CLI_ALIAS}"
-    success "تم تثبيت أداة الإدارة ${BOLD}${CLI_ALIAS}${NC} بنجاح! يمكنك كتابة ${CYAN}elblasy list${NC} في أي وقت."
+    success "Installed management CLI ${BOLD}${CLI_ALIAS}${NC} successfully! You can type ${CYAN}elblasy list${NC} anytime."
 }
 
 # ------------------------------------------------------------------------------
@@ -791,29 +790,29 @@ display_summary() {
 
     echo ""
     echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}${BOLD}              🎉 تم تثبيت نسخة Odoo بنجاح فائق وتجهيز الـ AI!                  ${NC}"
+    echo -e "${GREEN}${BOLD}              🎉 Odoo Instance Successfully Deployed (AI Ready)!              ${NC}"
     echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  🏢 ${BOLD}الجهة المطورة     :${NC} ${B4}${BOLD}elblasy.app${NC}"
-    echo -e "  🏷️  ${BOLD}اسم النسخة        :${NC} ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
-    echo -e "  🌐 ${BOLD}رابط الدخول       :${NC} ${CYAN}${UNDERLINE}http://${server_ip}:${HTTP_PORT}${NC}  ${DIM}(أو http://localhost:${HTTP_PORT})${NC}"
-    echo -e "  💬 ${BOLD}بورت الـ Chat/Chat :${NC} ${CYAN}${CHAT_PORT}${NC}"
-    echo -e "  🐘 ${BOLD}قاعدة البيانات    :${NC} ${PURPLE}PostgreSQL 17 + pgvector (AI Vector Enabled)${NC}"
-    echo -e "  🔑 ${BOLD}Master Password   :${NC} ${YELLOW}${BOLD}${ODOO_ADMIN_PASSWORD}${NC}"
-    echo -e "  📁 ${BOLD}مجلد التثبيت      :${NC} ${WHITE}${TARGET_DIR}${NC}"
-    echo -e "  🧩 ${BOLD}Custom Addons     :${NC} ${WHITE}${TARGET_DIR}/custom_addons${NC}"
-    echo -e "  📋 ${BOLD}ملف السجل (Log)    :${NC} ${WHITE}${INSTALL_LOG}${NC}"
+    echo -e "  🏢 ${BOLD}Provider           :${NC} ${B4}${BOLD}elblasy.app${NC}"
+    echo -e "  🏷️  ${BOLD}Instance Name      :${NC} ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
+    echo -e "  🌐 ${BOLD}Web Access (HTTP)  :${NC} ${CYAN}${UNDERLINE}http://${server_ip}:${HTTP_PORT}${NC}  ${DIM}(or http://localhost:${HTTP_PORT})${NC}"
+    echo -e "  💬 ${BOLD}Longpolling (Chat) :${NC} ${CYAN}${CHAT_PORT}${NC}"
+    echo -e "  🐘 ${BOLD}Database           :${NC} ${PURPLE}PostgreSQL 17 + pgvector (AI Vector Enabled)${NC}"
+    echo -e "  🔑 ${BOLD}Master Password    :${NC} ${YELLOW}${BOLD}${ODOO_ADMIN_PASSWORD}${NC}"
+    echo -e "  📁 ${BOLD}Instance Root      :${NC} ${WHITE}${TARGET_DIR}${NC}"
+    echo -e "  🧩 ${BOLD}Custom Addons      :${NC} ${WHITE}${TARGET_DIR}/custom_addons${NC}"
+    echo -e "  📋 ${BOLD}Install Log        :${NC} ${WHITE}${INSTALL_LOG}${NC}"
     echo ""
-    echo -e "${B2}${BOLD}  💡 نصيحة التعدد (Multi-Instance Trick):${NC}"
-    echo -e "  إذا قمت بتشغيل هذا الاسكريبت مرة أخرى، سيكتشف هذه النسخة تلقائياً،"
-    echo -e "  وسيقوم بإنشاء نسخة ثانية وثالثة ببورتات جديدة معزولة ودون أي تعارض نهائياً!"
+    echo -e "${B2}${BOLD}  💡 Multi-Instance Tip:${NC}"
+    echo -e "  Run this script again anytime to create 2nd, 3rd, or multiple isolated"
+    echo -e "  instances on this server with zero port or file conflicts!"
     echo ""
-    echo -e "${B3}${BOLD}  🛠️  أوامر التحكم السريعة (elblasy CLI):${NC}"
-    echo -e "  • عرض جميع النسخ      : ${CYAN}elblasy list${NC}"
-    echo -e "  • عرض السجلات الحية   : ${CYAN}elblasy logs ${INSTANCE_NAME}${NC}"
-    echo -e "  • إعادة تشغيل النسخة  : ${CYAN}elblasy restart ${INSTANCE_NAME}${NC}"
-    echo -e "  • أخذ باك اب فوري     : ${CYAN}elblasy backup ${INSTANCE_NAME}${NC}"
-    echo -e "  • عرض كلمات السر     : ${CYAN}elblasy info ${INSTANCE_NAME}${NC}"
+    echo -e "${B3}${BOLD}  🛠️  CLI Quick Commands (elblasy CLI):${NC}"
+    echo -e "  • List all instances  : ${CYAN}elblasy list${NC}"
+    echo -e "  • View live logs      : ${CYAN}elblasy logs ${INSTANCE_NAME}${NC}"
+    echo -e "  • Restart instance    : ${CYAN}elblasy restart ${INSTANCE_NAME}${NC}"
+    echo -e "  • Create backup       : ${CYAN}elblasy backup ${INSTANCE_NAME}${NC}"
+    echo -e "  • View info/passwords : ${CYAN}elblasy info ${INSTANCE_NAME}${NC}"
     echo ""
     echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════════${NC}"
     echo ""
