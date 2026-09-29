@@ -6,6 +6,7 @@
 # Website       : https://elblasy.app
 # GitHub        : https://github.com/elblasy33/last-odoo
 # Compatibility : Ubuntu 20.04 / 22.04 / 24.04 LTS & Debian 11/12
+# Supports      : Odoo 17 / 18 / 19 / 20 (AI Agents & RAG with PostgreSQL 17)
 # ==============================================================================
 
 set -eo pipefail
@@ -66,7 +67,6 @@ GLOBAL_BIN_DIR="/usr/local/bin"
 CLI_NAME="elblasy-odoo"
 CLI_ALIAS="elblasy"
 
-ODOO_DEFAULT_IMAGE="odoo:latest"
 POSTGRES_PGVECTOR_IMAGE="pgvector/pgvector:pg17"
 
 # Logging setup
@@ -203,7 +203,6 @@ is_port_in_use() {
     elif command -v lsof >/dev/null 2>&1; then
         lsof -i :"$port" >/dev/null 2>&1 && return 0
     else
-        # Fallback using bash socket probe
         (echo > /dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1 && return 0
     fi
     return 1
@@ -370,6 +369,15 @@ setup_instance_details() {
         exit 1
     fi
 
+    # Image Selection: Detect if custom Odoo 20 or other local images exist
+    local detected_img="odoo:latest"
+    if docker images --format '{{.Repository}}:{{.Tag}}' | grep -qi "odoo20"; then
+        detected_img=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -i "odoo20" | head -n1)
+    fi
+    echo -e "${WHITE}Select Odoo Image (Press Enter for recommended: ${CYAN}${detected_img}${WHITE}):${NC}"
+    read_from_tty "Odoo Image [default: ${detected_img}]: " INPUT_ODOO_IMAGE "$detected_img"
+    ODOO_IMAGE="${INPUT_ODOO_IMAGE:-$detected_img}"
+
     info "Instance will be deployed in isolated path: ${BOLD}${TARGET_DIR}${NC}"
 
     # Auto-detect ports without conflict!
@@ -407,6 +415,7 @@ setup_instance_details() {
     echo ""
     echo -e "${B3}${BOLD}  Instance Configuration Summary:${NC}"
     echo -e "  • Instance Name            : ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
+    echo -e "  • Odoo Docker Image        : ${CYAN}${BOLD}${ODOO_IMAGE}${NC}"
     echo -e "  • Odoo Web Port (HTTP)     : ${CYAN}${BOLD}${HTTP_PORT}${NC}"
     echo -e "  • Longpolling Port (Chat)  : ${CYAN}${BOLD}${CHAT_PORT}${NC}"
     echo -e "  • Database Port (PG Host)  : ${CYAN}${BOLD}${DB_PORT}${NC}"
@@ -416,62 +425,69 @@ setup_instance_details() {
 }
 
 # ------------------------------------------------------------------------------
-# Directory Structure Creation
+# Directory Structure Creation (Standardized etc, addons, data, db_data)
 # ------------------------------------------------------------------------------
 create_instance_filesystem() {
     step_header "4. Creating Isolated Directory Structure in /opt (${INSTANCE_NAME})"
 
     (
-        mkdir -p "${TARGET_DIR}/config"
-        mkdir -p "${TARGET_DIR}/custom_addons"
+        mkdir -p "${TARGET_DIR}/etc"
+        mkdir -p "${TARGET_DIR}/addons"
         mkdir -p "${TARGET_DIR}/data"
         mkdir -p "${TARGET_DIR}/db_data"
-        mkdir -p "${TARGET_DIR}/logs"
         mkdir -p "${TARGET_DIR}/backups"
         mkdir -p "${TARGET_DIR}/init-db"
 
-        # Permission calibration: Odoo inside docker runs as uid 101, postgres as 999
-        chown -R 101:101 "${TARGET_DIR}/data"
-        chown -R 101:101 "${TARGET_DIR}/custom_addons"
-        chown -R 101:101 "${TARGET_DIR}/logs"
-        chmod -R 775 "${TARGET_DIR}/custom_addons"
+        # Permission calibration: grant full write permissions to data and addons
+        # so any UID inside container (100, 101, 104, 1000) will never hit Permission Denied
+        chmod -R 777 "${TARGET_DIR}/data"
+        chmod -R 777 "${TARGET_DIR}/addons"
+        chmod -R 755 "${TARGET_DIR}/etc"
     ) &
     spinner $! "Creating folders and applying security permissions"
-    success "Directories created successfully in ${TARGET_DIR}"
+    success "Directories created successfully in ${TARGET_DIR} (etc, addons, data, db_data)"
 }
 
 # ------------------------------------------------------------------------------
-# Configuration Generation (odoo.conf, docker-compose.yml, init-db)
+# Configuration Generation (Modern etc/odoo.conf, docker-compose.yml, init-db)
 # ------------------------------------------------------------------------------
 generate_configurations() {
     step_header "5. Generating Configurations & Wiring PostgreSQL 17 (pgvector)"
 
     # 1. Generate pgvector auto-initialization script for PostgreSQL 17
+    # TRICK: We enable vector on BOTH postgres AND template1 so every future Odoo database inherits pgvector automatically!
     cat << EOF > "${TARGET_DIR}/init-db/01-init-pgvector.sql"
 -- =============================================================================
 -- Automated pgvector Extension & AI Vector Support
 -- Provided by elblasy.app
 -- =============================================================================
+\c postgres
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Log verification in PostgreSQL logs
+-- Connect to template1 so every newly created database in Odoo inherits pgvector!
+\c template1
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 DO \$\$
 BEGIN
-    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on PostgreSQL 17!';
+    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on postgres and template1 for PostgreSQL 17!';
 END \$\$;
 EOF
 
-    # 2. Generate odoo.conf
-    cat << EOF > "${TARGET_DIR}/config/odoo.conf"
+    # 2. Generate standard etc/odoo.conf for Modern Odoo (17 / 18 / 19 / 20)
+    cat << EOF > "${TARGET_DIR}/etc/odoo.conf"
 [options]
 ; ==============================================================================
-; Odoo Enterprise Configuration File
+; Odoo Enterprise & Community Configuration
 ; Automated Deployment & Tuning by elblasy.app
+; Modern Odoo 17 / 18 / 19 / 20 Compatible
 ; Instance: ${INSTANCE_NAME}
 ; ==============================================================================
-addons_path = /mnt/extra-addons,/usr/lib/python3/dist-packages/odoo/addons
+addons_path = /mnt/extra-addons
 data_dir = /var/lib/odoo
 
 ; Master Password for Database Management
@@ -484,11 +500,13 @@ db_user = ${POSTGRES_USER}
 db_password = ${POSTGRES_PASSWORD}
 db_name = False
 db_maxconn = 64
+dbfilter = .*
+list_db = True
 
-; Network & HTTP Settings
+; Network & HTTP Settings (Compatible with Odoo 17, 18, 19, 20)
 http_interface = 0.0.0.0
 http_port = 8069
-longpolling_port = 8072
+gevent_port = 8072
 proxy_mode = True
 
 ; Performance & Concurrency Tuning
@@ -497,15 +515,15 @@ max_cron_threads = 2
 limit_memory_hard = 2684354560
 limit_memory_soft = 2147483648
 limit_request = 8192
-limit_time_cpu = 120
-limit_time_real = 240
+limit_time_cpu = 600
+limit_time_real = 1200
 
-; Logging Configuration
-logfile = /var/log/odoo/odoo-server.log
+; Logging Configuration (Stdout for native Docker container logging)
+logfile = False
 log_level = info
 log_db = False
 EOF
-    chmod 640 "${TARGET_DIR}/config/odoo.conf"
+    chmod 644 "${TARGET_DIR}/etc/odoo.conf"
 
     # 3. Generate .env file
     cat << EOF > "${TARGET_DIR}/.env"
@@ -514,7 +532,7 @@ EOF
 # ==============================================================================
 INSTANCE_NAME=${INSTANCE_NAME}
 COMPOSE_PROJECT_NAME=elblasy_${INSTANCE_NAME//-/_}
-ODOO_IMAGE=${ODOO_DEFAULT_IMAGE}
+ODOO_IMAGE=${ODOO_IMAGE}
 POSTGRES_IMAGE=${POSTGRES_PGVECTOR_IMAGE}
 
 ODOO_HTTP_PORT=${HTTP_PORT}
@@ -533,7 +551,7 @@ MAINTENANCE_WORK_MEM=${MAINTENANCE_WORK_MEM}
 EOF
     chmod 600 "${TARGET_DIR}/.env"
 
-    # 4. Generate docker-compose.yml
+    # 4. Generate docker-compose.yml with standard etc mount
     cat << 'EOF' > "${TARGET_DIR}/docker-compose.yml"
 services:
   db:
@@ -575,16 +593,16 @@ services:
         condition: service_healthy
     environment:
       HOST: db
+      PORT: 8069
       USER: ${POSTGRES_USER}
       PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "${ODOO_HTTP_PORT}:8069"
       - "${ODOO_CHAT_PORT}:8072"
     volumes:
-      - ./config/odoo.conf:/etc/odoo/odoo.conf:ro
+      - ./etc/odoo.conf:/etc/odoo/odoo.conf:ro
       - ./data:/var/lib/odoo
-      - ./custom_addons:/mnt/extra-addons
-      - ./logs:/var/log/odoo
+      - ./addons:/mnt/extra-addons
     networks:
       - odoo_net
 
@@ -594,7 +612,7 @@ networks:
     driver: bridge
 EOF
 
-    success "Configurations generated successfully with pgvector support and secure credentials!"
+    success "Configurations generated successfully in etc/odoo.conf with pgvector and secure credentials!"
 }
 
 # ------------------------------------------------------------------------------
@@ -603,14 +621,22 @@ EOF
 start_instance_and_verify() {
     step_header "6. Starting Containers & Verifying Health (Odoo + pgvector)"
 
-    info "Pulling PostgreSQL 17 with pgvector AI image (${POSTGRES_PGVECTOR_IMAGE})..."
-    docker pull "${POSTGRES_PGVECTOR_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
-    success "PostgreSQL 17 (pgvector) image is ready!"
+    if ! docker image inspect "${POSTGRES_PGVECTOR_IMAGE}" >/dev/null 2>&1; then
+        info "Pulling PostgreSQL 17 with pgvector AI image (${POSTGRES_PGVECTOR_IMAGE})..."
+        docker pull "${POSTGRES_PGVECTOR_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
+        success "PostgreSQL 17 (pgvector) image is ready!"
+    else
+        success "PostgreSQL 17 image already cached locally!"
+    fi
 
     echo ""
-    info "Pulling Odoo application image (${ODOO_DEFAULT_IMAGE}) — this may take 1-2 minutes depending on network..."
-    docker pull "${ODOO_DEFAULT_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
-    success "Odoo image downloaded successfully!"
+    if ! docker image inspect "${ODOO_IMAGE}" >/dev/null 2>&1; then
+        info "Pulling Odoo application image (${ODOO_IMAGE}) — this may take 1-2 minutes depending on network..."
+        docker pull "${ODOO_IMAGE}" 2>&1 | tee -a "$INSTALL_LOG"
+        success "Odoo image downloaded successfully!"
+    else
+        success "Odoo image (${ODOO_IMAGE}) already exists locally, skipping download!"
+    fi
 
     echo ""
     info "Launching isolated container stack (${INSTANCE_NAME})..."
@@ -776,8 +802,9 @@ case "$ACTION" in
         echo -e "${BOLD}${CYAN}=== Instance Details: ${TARGET} ===${NC}"
         cat "$dir/.env"
         echo ""
-        echo "Custom Addons Path: ${dir}/custom_addons"
-        echo "Logs Path: ${dir}/logs"
+        echo "Configuration: ${dir}/etc/odoo.conf"
+        echo "Extra Addons : ${dir}/addons"
+        echo "Data Filestore: ${dir}/data"
         ;;
     backup)
         verify_inst "$TARGET"
@@ -788,10 +815,9 @@ case "$ACTION" in
         bfile="${bdir}/backup_${TARGET}_${ts}.tar.gz"
         echo -e "${CYAN}Creating complete backup for instance ${TARGET}...${NC}"
         
-        # Source credentials
         eval $(grep -E '^POSTGRES_USER=|^POSTGRES_DB=' "$dir/.env")
         docker exec -t "db_${TARGET}" pg_dumpall -U "$POSTGRES_USER" > "${dir}/backups/dump_${ts}.sql"
-        tar -czf "$bfile" -C "$dir" data config/odoo.conf "backups/dump_${ts}.sql"
+        tar -czf "$bfile" -C "$dir" data etc/odoo.conf "backups/dump_${ts}.sql"
         rm -f "${dir}/backups/dump_${ts}.sql"
         echo -e "${GREEN}✓ Backup created successfully:${NC} ${bfile}"
         ;;
@@ -836,12 +862,14 @@ display_summary() {
     echo ""
     echo -e "  🏢 ${BOLD}Provider           :${NC} ${B4}${BOLD}elblasy.app${NC}"
     echo -e "  🏷️  ${BOLD}Instance Name      :${NC} ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
+    echo -e "  🐳 ${BOLD}Odoo Docker Image  :${NC} ${CYAN}${BOLD}${ODOO_IMAGE}${NC}"
     echo -e "  🌐 ${BOLD}Web Access (HTTP)  :${NC} ${CYAN}${UNDERLINE}http://${server_ip}:${HTTP_PORT}${NC}  ${DIM}(or http://localhost:${HTTP_PORT})${NC}"
     echo -e "  💬 ${BOLD}Longpolling (Chat) :${NC} ${CYAN}${CHAT_PORT}${NC}"
     echo -e "  🐘 ${BOLD}Database           :${NC} ${PURPLE}PostgreSQL 17 + pgvector (AI Vector Enabled)${NC}"
     echo -e "  🔑 ${BOLD}Master Password    :${NC} ${YELLOW}${BOLD}${ODOO_ADMIN_PASSWORD}${NC}"
     echo -e "  📁 ${BOLD}Instance Root      :${NC} ${WHITE}${TARGET_DIR}${NC}"
-    echo -e "  🧩 ${BOLD}Custom Addons      :${NC} ${WHITE}${TARGET_DIR}/custom_addons${NC}"
+    echo -e "  ⚙️  ${BOLD}Config File        :${NC} ${WHITE}${TARGET_DIR}/etc/odoo.conf${NC}"
+    echo -e "  🧩 ${BOLD}Extra Addons       :${NC} ${WHITE}${TARGET_DIR}/addons${NC}"
     echo -e "  📋 ${BOLD}Install Log        :${NC} ${WHITE}${INSTALL_LOG}${NC}"
     echo ""
     echo -e "${B2}${BOLD}  💡 Multi-Instance Tip:${NC}"

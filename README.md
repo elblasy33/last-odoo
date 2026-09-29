@@ -76,14 +76,13 @@ sudo bash install.sh
 /opt/elblasy-odoo/
 ├── instances/
 │   ├── odoo-app-1/
-│   │   ├── config/
+│   │   ├── etc/
 │   │   │   └── odoo.conf             # إعدادات Odoo المخصصة للنسخة
-│   │   ├── custom_addons/            # ضع موديولاتك وإضافات الذكاء الاصطناعي هنا
+│   │   ├── addons/                   # موديولاتك المخصصة وإضافات الذكاء الاصطناعي
 │   │   ├── data/                     # Odoo Filestore والملفات الثابتة
 │   │   ├── db_data/                  # بيانات قاعدة بيانات PostgreSQL 17 + pgvector
-│   │   ├── logs/                     # سجلات تشغيل Odoo
 │   │   ├── backups/                  # النسخ الاحتياطية الخاصة بالنسخة
-│   │   ├── init-db/                  # اسكريبتات تفعيل pgvector تلقائياً
+│   │   ├── init-db/                  # اسكريبتات تفعيل pgvector تلقائياً على postgres و template1
 │   │   ├── docker-compose.yml        # تركيبة تشغيل الحاويات المعزولة
 │   │   └── .env                      # متغيرات البيئة والبورتات وكلمات السر
 │   └── odoo-app-2/                   # النسخة الثانية المعزولة
