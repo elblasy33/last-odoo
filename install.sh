@@ -265,6 +265,7 @@ https://download.docker.com/linux/${ID} $(lsb_release -cs) stable" \
 
 # ------------------------------------------------------------------------------
 # Odoo Version → Docker Image + dot-version string
+# For Odoo 19/20 (no official image): interactive selector shown
 # ------------------------------------------------------------------------------
 resolve_odoo_version() {
     local ver="$1"
@@ -273,34 +274,62 @@ resolve_odoo_version() {
         16) ODOO_IMAGE="odoo:16";  ODOO_VER_DOT="16.0" ;;
         17) ODOO_IMAGE="odoo:17";  ODOO_VER_DOT="17.0" ;;
         18) ODOO_IMAGE="odoo:18";  ODOO_VER_DOT="18.0" ;;
-        19)
-            ODOO_VER_DOT="19.0"; ODOO_VER_NUM=19
-            # check for local image first
-            local li; li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-                | grep -iE '^odoo:19$|odoo.*19' | head -n1 || true)
-            if [[ -n "$li" ]]; then
-                ODOO_IMAGE="$li"
-                info "Using locally found Odoo 19 image: ${CYAN}${li}${NC}"
+        19|20)
+            ODOO_VER_DOT="${ver}.0"
+            ODOO_VER_NUM=$ver
+            warn "Odoo ${ver} has no official Docker Hub image yet."
+            echo ""
+
+            # Collect ALL local images that might be Odoo ${ver}
+            local found_images=()
+            while IFS= read -r img; do
+                [[ -n "$img" ]] && found_images+=("$img")
+            done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+                | grep -iE "odoo.*${ver}|${ver}.*odoo|^odoo:${ver}" | grep -v '<none>' | sort -u || true)
+
+            if [[ ${#found_images[@]} -gt 0 ]]; then
+                echo -e "${CYAN}${BOLD}Local images found matching Odoo ${ver}:${NC}"
+                local idx=1
+                for img in "${found_images[@]}"; do
+                    echo -e "  ${CYAN}${idx})${NC} ${img}"
+                    idx=$((idx + 1))
+                done
+                echo -e "  ${CYAN}${idx})${NC} Enter a different image tag manually"
+                echo ""
+                local pick=""
+                read_tty "Select image [1-${idx}, default=1]: " pick "1"
+
+                if [[ "$pick" =~ ^[0-9]+$ ]] && [[ "$pick" -ge 1 ]] && [[ "$pick" -lt $idx ]]; then
+                    ODOO_IMAGE="${found_images[$((pick-1))]}"
+                    success "Using local image: ${CYAN}${ODOO_IMAGE}${NC}"
+                else
+                    # Manual entry
+                    local custom_img=""
+                    read_tty "Docker image tag for Odoo ${ver} [default: odoo:${ver}]: " custom_img "odoo:${ver}"
+                    ODOO_IMAGE="${custom_img:-odoo:${ver}}"
+                    success "Using image: ${CYAN}${ODOO_IMAGE}${NC}"
+                fi
             else
-                warn "Odoo 19 has no official Docker Hub image yet."
-                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env when official image ships."
-                ODOO_IMAGE="odoo:17"
+                echo -e "${GRAY}No local Odoo ${ver} images detected in Docker.${NC}"
+                echo ""
+                echo -e "  ${CYAN}1)${NC} Use ${BOLD}odoo:${ver}${NC} (or specify custom tag)  ${DIM}(e.g. odoo20-odoo20:latest, myrepo/odoo:${ver})${NC}"
+                echo -e "  ${CYAN}2)${NC} Use ${BOLD}odoo:18${NC} as temporary fallback      ${DIM}(Latest LTS stable; update .env later)${NC}"
+                echo ""
+                local pick=""
+                read_tty "Choice [1/2, default=1]: " pick "1"
+
+                if [[ "$pick" == "2" ]]; then
+                    warn "Using odoo:18 as fallback. Update ODOO_IMAGE in .env when ready."
+                    ODOO_IMAGE="odoo:18"
+                else
+                    local custom_img=""
+                    read_tty "Docker image tag [default: odoo:${ver}]: " custom_img "odoo:${ver}"
+                    ODOO_IMAGE="${custom_img:-odoo:${ver}}"
+                    success "Using image: ${CYAN}${ODOO_IMAGE}${NC}"
+                fi
             fi
             ;;
-        20)
-            ODOO_VER_DOT="20.0"; ODOO_VER_NUM=20
-            local li; li=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-                | grep -iE '^odoo:20$|odoo:20\.|odoo20' | head -n1 || true)
-            if [[ -n "$li" ]]; then
-                ODOO_IMAGE="$li"
-                info "Using locally found Odoo 20 image: ${CYAN}${li}${NC}"
-            else
-                warn "Odoo 20 has no official Docker Hub image yet."
-                warn "Falling back to odoo:17. Update ODOO_IMAGE in .env when official image ships."
-                ODOO_IMAGE="odoo:17"
-            fi
-            ;;
-        *) ODOO_IMAGE="odoo:17"; ODOO_VER_DOT="17.0"; ODOO_VER_NUM=17 ;;
+        *) ODOO_IMAGE="odoo:18"; ODOO_VER_DOT="18.0"; ODOO_VER_NUM=18 ;;
     esac
 }
 
@@ -380,10 +409,21 @@ setup_wizard() {
         4) ODOO_VERSION="17"; resolve_odoo_version 17 ;;
         5) ODOO_VERSION="16"; resolve_odoo_version 16 ;;
         6)
-            ODOO_VERSION="custom"; ODOO_VER_DOT="custom"; ODOO_VER_NUM=17
-            local ci="odoo:17"
-            read_tty "Docker image tag (e.g. myrepo/odoo:20): " ci "odoo:17"
+            local ci="odoo:18"
+            read_tty "Docker image tag (e.g. odoo20-odoo20:latest, myrepo/odoo:18): " ci "odoo:18"
             ODOO_IMAGE="$ci"
+            local detected_ver="18"
+            if [[ "$ci" =~ 20 ]]; then detected_ver="20"
+            elif [[ "$ci" =~ 19 ]]; then detected_ver="19"
+            elif [[ "$ci" =~ 18 ]]; then detected_ver="18"
+            elif [[ "$ci" =~ 17 ]]; then detected_ver="17"
+            elif [[ "$ci" =~ 16 ]]; then detected_ver="16"
+            fi
+            local user_ver=""
+            read_tty "Odoo major version number [16/17/18/19/20, default=${detected_ver}]: " user_ver "$detected_ver"
+            ODOO_VERSION="${user_ver:-$detected_ver}"
+            ODOO_VER_NUM="${ODOO_VERSION}"
+            ODOO_VER_DOT="${ODOO_VERSION}.0"
             ;;
         *) ODOO_VERSION="18"; resolve_odoo_version 18 ;;
     esac

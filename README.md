@@ -36,8 +36,8 @@ sudo bash install.sh
 
 1. **Detects your OS** — validates Ubuntu / Debian compatibility
 2. **Installs Docker Engine + Compose V2** — if not already present
-3. **Interactive Version Selector** — choose Odoo 16, 17, 18, 19, or 20
-4. **Smart Port Hunter** — automatically finds free ports for HTTP (8069+), longpolling (8072+), and PostgreSQL (5432+)
+3. **Interactive Version Selector** — choose Odoo 16, 17, 18, 19, 20, or a Custom Docker image
+4. **Smart Version-Aware Port Allocation** — assigns instant, conflict-free ports tailored to your Odoo version without slow sequential scans
 5. **Creates the instance directory structure** — standard Odoo Enterprise layout under `/opt/elblasy-odoo/instances/`
 6. **Generates all configuration files** — `odoo.conf`, `.env`, `docker-compose.yml`, and the pgvector SQL init script
 7. **Pulls Docker images** and starts the isolated stack
@@ -48,15 +48,25 @@ sudo bash install.sh
 
 ## Supported Odoo Versions
 
-| Version | Docker Hub Image | Status |
-|---------|-----------------|--------|
-| Odoo 18 | `odoo:18` | ✅ Official — Recommended |
-| Odoo 17 | `odoo:17` | ✅ Official — LTS |
-| Odoo 16 | `odoo:16` | ✅ Official — LTS |
-| Odoo 19 | *(no official image yet)* | ⚠️ Fallback to `odoo:17` |
-| Odoo 20 | *(no official image yet)* | ⚠️ Uses local build if found |
+| Version | Docker Image | Status | Default Ports (HTTP / Chat / DB) |
+|---------|-------------|--------|----------------------------------|
+| **Odoo 20** | Local build / custom tag (e.g. `odoo20-odoo20:latest`, `odoo:20`) | ⚡ Cutting-Edge (AI & pgvector) | `8020` / `9020` / `5410` |
+| **Odoo 19** | Local build / custom tag (e.g. `odoo:19`) | 🔬 Preview | `8019` / `9019` / `5409` |
+| **Odoo 18** | `odoo:18` (official Docker Hub) | 🌟 Latest Stable LTS (Recommended) | `8018` / `9018` / `5408` |
+| **Odoo 17** | `odoo:17` (official Docker Hub) | 🛡️ Long Term Support | `8017` / `9017` / `5407` |
+| **Odoo 16** | `odoo:16` (official Docker Hub) | 🛡️ Long Term Support | `8016` / `9016` / `5406` |
 
-> **Odoo 19 & 20**: No official Docker Hub images exist yet. The installer will use a locally built image if found (e.g. `odoo:20`, `odoo20-odoo20:latest`), otherwise falls back to `odoo:17`. Update `ODOO_IMAGE` in `.env` once official images are released.
+> **Odoo 19 & 20 Images**: The installer automatically detects any locally built or tagged images (e.g., `odoo20-odoo20:latest`, `odoo:20`) and presents an interactive selection list. You can also specify any custom image tag or registry URL.
+
+---
+
+## 🎯 Version-Aware Port Scheme
+
+Port allocation is instant, deterministic, and avoids sequential port scanning delays:
+- **HTTP Base** = `8000 + Version` (e.g., Odoo 20 → `8020`, Odoo 18 → `8018`)
+- **Chat/Longpoll Base** = `9000 + Version` (e.g., Odoo 20 → `9020`, Odoo 18 → `9018`)
+- **Database Base** = `5400 + Version - 10` (e.g., Odoo 20 → `5410`, Odoo 18 → `5408`, bound to `127.0.0.1`)
+- **Multiple Instances of the same version**: each subsequent instance increments HTTP/Chat by `+10` and DB by `+1` (e.g., 2nd Odoo 20 instance gets `HTTP: 8030, Chat: 9030, DB: 5411`).
 
 ---
 
