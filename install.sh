@@ -85,13 +85,11 @@ log_to_file() {
 # ------------------------------------------------------------------------------
 print_banner() {
     clear
-    cat << "EOF"
- [38;5;99m   ______  __      ____  __       ___    _______  __     [38;5;51m     ___     ____  ____ 
- [38;5;105m  / ____/ / /     / __ )/ /      /   |  / ___/\ \/ /     [38;5;51m    /   |   / __ \/ __ \
- [38;5;75m / __/   / /     / __  / /      / /| |  \__ \  \  /      [38;5;51m   / /| |  / /_/ / /_/ /
- [38;5;45m/ /___  / /___  / /_/ / /___   / ___ | ___/ /  / /       [38;5;51m  / ___ | / ____/ ____/ 
- [38;5;51m\____/ /_____/ /_____/_____/  /_/  |_|/____/  /_/        [38;5;51m /_/  |_|/_/   /_/      
-EOF
+    echo -e "${B1}   ______  __      ____  __       ___    _______  __          ___     ____  ____ ${NC}"
+    echo -e "${B2}  / ____/ / /     / __ )/ /      /   |  / ___/\\ \\/ /         /   |   / __ \\/ __ \\${NC}"
+    echo -e "${B3} / __/   / /     / __  / /      / /| |  \\__ \\  \\  /         / /| |  / /_/ / /_/ /${NC}"
+    echo -e "${B4}/ /___  / /___  / /_/ / /___   / ___ | ___/ /  / /         / ___ | / ____/ ____/ ${NC}"
+    echo -e "${B5}\\____/ /_____/ /_____/_____/  /_/  |_|/____/  /_/         /_/  |_|/_/   /_/      ${NC}"
     echo -e "${B2}${BOLD}  ╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${B2}${BOLD}  ║${WHITE}  Enterprise Odoo + PostgreSQL 17 (pgvector) Multi-Instance Installer     ${B2}║${NC}"
     echo -e "${B2}${BOLD}  ║${CYAN}  AI-Ready Architecture | RAG & Vector Embeddings | Port Conflict Hunter  ${B2}║${NC}"
@@ -142,6 +140,25 @@ spinner() {
     printf "\r${GREEN}[✓]${NC} ${message} (Done)\n"
 }
 
+read_from_tty() {
+    local prompt="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local input=""
+    
+    # When executed via `curl ... | bash`, stdin is consumed by the pipe.
+    # We must read from /dev/tty to capture terminal keystrokes.
+    if [ -t 0 ]; then
+        read -r -p "$prompt" input || true
+    elif [ -e /dev/tty ]; then
+        read -r -p "$prompt" input < /dev/tty || true
+    else
+        input=""
+    fi
+    input="${input:-$default_val}"
+    printf -v "$var_name" "%s" "$input"
+}
+
 # ------------------------------------------------------------------------------
 # System & Root Check
 # ------------------------------------------------------------------------------
@@ -164,7 +181,8 @@ check_os() {
 
     if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
         warn "Detected OS: $OS_NAME. This script is built and tested for Ubuntu / Debian."
-        read -p "Do you want to proceed anyway? (y/n): " proceed
+        local proceed="n"
+        read_from_tty "Do you want to proceed anyway? (y/n): " proceed "n"
         if [[ "$proceed" != "y" && "$proceed" != "Y" ]]; then
             exit 1
         fi
@@ -321,6 +339,7 @@ calculate_postgres_tuning() {
 # Instance Creation Wizard
 # ------------------------------------------------------------------------------
 setup_instance_details() {
+    local passed_name="$1"
     step_header "2. Customizing New Odoo Instance (Multi-Tenancy Setup)"
 
     mkdir -p "$INSTANCES_DIR"
@@ -329,9 +348,13 @@ setup_instance_details() {
     local default_name
     default_name=$(generate_unique_instance_name)
 
-    echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
-    read -p "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME
-    INSTANCE_NAME=${INPUT_INSTANCE_NAME:-$default_name}
+    if [ -n "$passed_name" ]; then
+        INSTANCE_NAME="$passed_name"
+    else
+        echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
+        read_from_tty "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME "$default_name"
+        INSTANCE_NAME="${INPUT_INSTANCE_NAME:-$default_name}"
+    fi
     # Sanitize instance name (lowercase, alphanumeric, dashes)
     INSTANCE_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
 
@@ -761,7 +784,12 @@ case "$ACTION" in
         ;;
     delete)
         verify_inst "$TARGET"
-        read -p "Are you absolutely sure you want to delete instance '${TARGET}' and all its data? (type 'yes' to confirm): " confirm
+        confirm="no"
+        if [ -t 0 ]; then
+            read -r -p "Are you absolutely sure you want to delete instance '${TARGET}' and all its data? (type 'yes' to confirm): " confirm || true
+        elif [ -e /dev/tty ]; then
+            read -r -p "Are you absolutely sure you want to delete instance '${TARGET}' and all its data? (type 'yes' to confirm): " confirm < /dev/tty || true
+        fi
         if [ "$confirm" == "yes" ]; then
             echo -e "${RED}Stopping and removing containers, volumes and files...${NC}"
             cd "${INSTANCES_DIR}/${TARGET}" && docker compose down -v
@@ -822,11 +850,12 @@ display_summary() {
 # Main Execution Pipeline
 # ------------------------------------------------------------------------------
 main() {
+    local passed_instance="$1"
     print_banner
     check_root
     check_os
     install_docker_prerequisites
-    setup_instance_details
+    setup_instance_details "$passed_instance"
     create_instance_filesystem
     generate_configurations
     start_instance_and_verify
