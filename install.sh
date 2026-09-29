@@ -288,7 +288,8 @@ list_existing_instances() {
 }
 
 generate_unique_instance_name() {
-    local base_name="odoo-app"
+    local version_tag="${1:-20}"
+    local base_name="odoo${version_tag}"
     local idx=1
     while [ -d "${INSTANCES_DIR}/${base_name}-${idx}" ]; do
         idx=$((idx + 1))
@@ -344,33 +345,7 @@ setup_instance_details() {
     mkdir -p "$INSTANCES_DIR"
     list_existing_instances
 
-    local default_name
-    default_name=$(generate_unique_instance_name)
-
-    if [ -n "$passed_name" ]; then
-        INSTANCE_NAME="$passed_name"
-    else
-        echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
-        read_from_tty "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME "$default_name"
-        INSTANCE_NAME="${INPUT_INSTANCE_NAME:-$default_name}"
-    fi
-    # Sanitize instance name (lowercase, alphanumeric, dashes)
-    INSTANCE_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
-
-    if [ -z "$INSTANCE_NAME" ]; then
-        INSTANCE_NAME="$default_name"
-    fi
-
-    TARGET_DIR="${INSTANCES_DIR}/${INSTANCE_NAME}"
-
-    if [ -d "$TARGET_DIR" ]; then
-        error "Directory $TARGET_DIR already exists! An instance with this name already exists."
-        echo -e "${YELLOW}Choose a different name or remove previous instance using:${NC} ${BOLD}elblasy delete ${INSTANCE_NAME}${NC}"
-        exit 1
-    fi
-
-    # Version Selection (Odoo 16 to 20)
-    echo ""
+    # 1. Version Selection (Odoo 16 to 20)
     echo -e "${WHITE}${BOLD}Select Odoo Version to deploy:${NC}"
     echo -e "  ${CYAN}1)${NC} Odoo ${BOLD}20${NC} (AI Agents, RAG & Vector Embeddings — Next-Gen) ${GREEN}[Recommended / Default]${NC}"
     echo -e "  ${CYAN}2)${NC} Odoo ${BOLD}19${NC} (Modern Enterprise & Community)"
@@ -421,6 +396,33 @@ setup_instance_details() {
             ;;
     esac
 
+    # 2. Instance Naming based on selected version
+    local default_name
+    default_name=$(generate_unique_instance_name "$ODOO_VERSION")
+
+    if [ -n "$passed_name" ]; then
+        INSTANCE_NAME="$passed_name"
+    else
+        echo ""
+        echo -e "${WHITE}Enter a unique name for this instance (Press Enter for default: ${CYAN}${default_name}${WHITE}):${NC}"
+        read_from_tty "Instance Name [default: ${default_name}]: " INPUT_INSTANCE_NAME "$default_name"
+        INSTANCE_NAME="${INPUT_INSTANCE_NAME:-$default_name}"
+    fi
+    # Sanitize instance name (lowercase, alphanumeric, dashes)
+    INSTANCE_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-' '-' | sed 's/^-//;s/-$//')
+
+    if [ -z "$INSTANCE_NAME" ]; then
+        INSTANCE_NAME="$default_name"
+    fi
+
+    TARGET_DIR="${INSTANCES_DIR}/${INSTANCE_NAME}"
+
+    if [ -d "$TARGET_DIR" ]; then
+        error "Directory $TARGET_DIR already exists! An instance with this name already exists."
+        echo -e "${YELLOW}Choose a different name or remove previous instance using:${NC} ${BOLD}elblasy delete ${INSTANCE_NAME}${NC}"
+        exit 1
+    fi
+
     info "Instance will be deployed in isolated path: ${BOLD}${TARGET_DIR}${NC}"
 
     # Auto-detect ports without conflict!
@@ -448,7 +450,7 @@ setup_instance_details() {
     success "Allocated PostgreSQL direct port: ${BOLD}${CYAN}${DB_PORT}${NC}"
 
     # Security Credentials Generation
-    POSTGRES_USER="odoo_${INSTANCE_NAME//-/_}"
+    POSTGRES_USER="odoo"
     POSTGRES_PASSWORD=$(openssl rand -hex 16)
     POSTGRES_DB="postgres"
     ODOO_ADMIN_PASSWORD=$(openssl rand -base64 15 | tr -dc 'a-zA-Z0-9' | head -c 16)
@@ -498,7 +500,6 @@ generate_configurations() {
     step_header "5. Generating Configurations & Wiring PostgreSQL 17 (pgvector)"
 
     # 1. Generate pgvector auto-initialization script for PostgreSQL 17
-    # TRICK: We enable vector on BOTH postgres AND template1 so every future Odoo database inherits pgvector automatically!
     cat << EOF > "${TARGET_DIR}/init-db/01-init-pgvector.sql"
 -- =============================================================================
 -- Automated pgvector Extension & AI Vector Support
@@ -515,19 +516,26 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Pre-create database 'odoo' for Odoo and enable vector
+CREATE DATABASE odoo OWNER ${POSTGRES_USER};
+\c odoo
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 DO \$\$
 BEGIN
-    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on postgres and template1 for PostgreSQL 17!';
+    RAISE NOTICE 'elblasy.app: pgvector extension successfully loaded on postgres, template1 and odoo for PostgreSQL 17!';
 END \$\$;
 EOF
 
-    # 2. Generate standard etc/odoo.conf for Modern Odoo (17 / 18 / 19 / 20)
+    # 2. Generate standard etc/odoo.conf for Modern Odoo (16 / 17 / 18 / 19 / 20)
     cat << EOF > "${TARGET_DIR}/etc/odoo.conf"
 [options]
 ; ==============================================================================
 ; Odoo Enterprise & Community Configuration
 ; Automated Deployment & Tuning by elblasy.app
-; Modern Odoo 17 / 18 / 19 / 20 Compatible
+; Modern Odoo 16 / 17 / 18 / 19 / 20 Compatible
 ; Instance: ${INSTANCE_NAME}
 ; ==============================================================================
 addons_path = /mnt/extra-addons
@@ -546,10 +554,11 @@ db_maxconn = 64
 dbfilter = .*
 list_db = True
 
-; Network & HTTP Settings (Compatible with Odoo 17, 18, 19, 20)
+; Network & HTTP Settings (Compatible with Odoo 16, 17, 18, 19, 20)
 http_interface = 0.0.0.0
 http_port = 8069
 gevent_port = 8072
+longpolling_port = 8072
 proxy_mode = True
 
 ; Performance & Concurrency Tuning
@@ -635,10 +644,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      HOST: db
-      PORT: 8069
-      USER: ${POSTGRES_USER}
-      PASSWORD: ${POSTGRES_PASSWORD}
+      - HOST=db
+      - PORT=5432
+      - USER=${POSTGRES_USER}
+      - PASSWORD=${POSTGRES_PASSWORD}
     ports:
       - "${ODOO_HTTP_PORT}:8069"
       - "${ODOO_CHAT_PORT}:8072"
