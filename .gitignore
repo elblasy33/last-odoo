@@ -1,0 +1,19 @@
+# Environment & Config
+.env
+*.env.local
+
+# Logs
+*.log
+logs/
+
+# Backups & Data
+*.tar.gz
+*.sql
+*.dump
+data/
+db_data/
+backups/
+
+# System
+.DS_Store
+Thumbs.db
