@@ -1,31 +1,29 @@
-# 🚀 Odoo Suite (v16 — v20) Multi-Instance Installer (AI-Ready)
+# 🚀 Odoo Multi-Instance Installer (v16–v20) — AI-Ready
 ### Powered by [elblasy.app](https://elblasy.app) — Modern Cloud & DevOps Solutions
 
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%20|%2022.04%20|%2024.04-orange.svg?style=for-the-badge&logo=ubuntu)](https://ubuntu.com)
-[![Docker](https://img.shields.io/badge/Docker-Engine%20v24+-blue.svg?style=for-the-badge&logo=docker)](https://www.docker.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20(pgvector)-336791.svg?style=for-the-badge&logo=postgresql)](https://github.com/pgvector/pgvector)
-[![Odoo](https://img.shields.io/badge/Odoo-v16%20|%20v17%20|%20v18%20|%20v19%20|%20v20-714B67.svg?style=for-the-badge&logo=odoo)](https://www.odoo.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%20|%2022.04%20|%2024.04-E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white)](https://ubuntu.com)
+[![Docker](https://img.shields.io/badge/Docker-Compose%20V2-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-336791.svg?style=for-the-badge&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Odoo](https://img.shields.io/badge/Odoo-v16%20|%20v17%20|%20v18%20|%20v19%20|%20v20-714B67.svg?style=for-the-badge&logo=odoo&logoColor=white)](https://www.odoo.com)
+[![License](https://img.shields.io/badge/License-MIT-22C55E.svg?style=for-the-badge)](LICENSE)
 
 ---
 
-## 🌟 نظرة عامة | Overview
+## Overview
 
-اسكريبت تثبيت احترافي فائق السرعة لنشر وإدارة نسخ **Odoo** متعددة على نفس السيرفر بنظام **Multi-Tenancy** كامل وبدون أي تعارض في البورتات أو الملفات.
+A **production-grade, one-command installer** that deploys fully isolated Odoo instances on any Ubuntu / Debian server. Each instance gets its own PostgreSQL 17 database with **pgvector** pre-installed (for AI Agents, RAG, and semantic search), its own ports, directory structure, credentials, and Docker Compose stack — all automatically detected and conflict-free.
 
-يدعم الاسكريبت اختيار وتثبيت أي إصدار من **Odoo من الإصدار 16 وحتى 20** تفاعلياً، ومجهز بدعم كامل لتقنيات الذكاء الاصطناعي (مثل **AI Agents** وتقنية **RAG - Retrieval-Augmented Generation**) عبر دمج صورة **`pgvector/pgvector:pg17`** (قاعدة بيانات **PostgreSQL 17** المدمج معها امتداد الـ Vectors لحفظ واسترجاع المتجهات بكفاءة فائقة على قاعدة البيانات وقالب `template1`).
+Run the script multiple times to create as many isolated instances as you need on the same server, with zero port or data conflicts.
 
 ---
 
-## ⚡ التثبيت السريع بسطر واحد | One-Line Fast Install
-
-يمكنك تشغيل الاسكريبت مباشرة على أي سيرفر Ubuntu أو Debian عبر الأمر التالي:
+## Quick Install (One-Line)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/elblasy33/last-odoo/main/install.sh | sudo bash
 ```
 
-أو عبر استنساخ المستودع (Clone):
+Or clone and run locally:
 ```bash
 git clone https://github.com/elblasy33/last-odoo.git
 cd last-odoo
@@ -34,113 +32,166 @@ sudo bash install.sh
 
 ---
 
-## ✨ المميزات الجوهرية والتريكات الذكية
+## What It Does
 
-### 1. 🎛️ قائمة اختيار إصدار Odoo من 16 إلى 20 (Interactive Version Selector)
-يتيح لك الاسكريبت اختيار الإصدار المناسب لمشروعك عبر قائمة تفاعلية مرنة:
-* **Odoo 20**: أحدث إصدار مدعوم بميزات الذكاء الاصطناعي و RAG وحفظ المتجهات في PostgreSQL 17.
-* **Odoo 19**: الإصدار الحديث للشركات والمؤسسات.
-* **Odoo 18 (LTS)**: الإصدار المستقر طويل الدعم.
-* **Odoo 17 (LTS)**: الإصدار المستقر طويل الدعم.
-* **Odoo 16 (LTS)**: الإصدار المستقر الكلاسيكي.
-* **Custom Docker Image**: إمكانية إدخال أي صورة مخصصة أو مستودع خاص بك.
-
-### 2. 🔁 تشغيل نسخ متعددة دون أي تعارض (Multi-Instance Isolated Tenancy)
-* عند تشغيل الاسكريبت لأول مرة، ينشئ نسختك الأولى (مثلاً `odoo-app-1`).
-* **عند تشغيل الاسكريبت مرة ثانية أو ثالثة على نفس السيرفر**:
-  * يكتشف الاسكريبت النسخ الحالية تلقائياً ويعرضها لك.
-  * يطلب منك تحديد اسم للنسخة الجديدة (أو يولد اسماً افتراضياً مثل `odoo-app-2`).
-  * يتم عزل كل نسخة تماماً داخل مسار مخصص في `/opt/elblasy-odoo/instances/<اسم-النسخة>/`.
-  * شبكة Docker معزولة وحاويات مستقلة لكل نسخة (`odoo_<name>`, `db_<name>`).
-
-### 2. 🎯 كاشف البورتات التلقائي (Smart Port Conflict Hunter)
-* يفحص البورتات الافتراضية (`8069` للويب، `8072` للشات، و `5432` لقاعدة البيانات).
-* إذا كان أي بورت محجوزاً بواسطة نسخة سابقة أو خدمة أخرى، يبحث الاسكريبت فوراً عن أقرب بورت شاغر (`8070`, `8073`, ...) ويربطه تلقائياً دون أي تدخل يدوي!
-
-### 3. 🧠 دعم كامل لـ AI Agents و RAG (PostgreSQL 17 + pgvector)
-* تم استبدال صورة البوستجرس التقليدية بصورة **`pgvector/pgvector:pg17`**.
-* تفعيل تلقائي لامتداد المتجهات:
-  ```sql
-  CREATE EXTENSION IF NOT EXISTS vector;
-  ```
-* يتيح لموديولات الذكاء الاصطناعي في Odoo تخزين الـ Vector Embeddings والبحث الدلالي (Semantic Search) بسرعة فائقة.
-
-### 4. 🚀 ضبط أداء السيرفر تلقائياً (Auto-Tuning)
-* فحص حجم الرامات وعدد الأنوية (CPUs) في السيرفر وتوليف إعدادات الـ DB تلقائياً:
-  * `shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`
-  * حساب عدد الـ Odoo Workers بدقة: `(CPU Cores * 2) + 1` وحساب حدود الذاكرة `limit_memory_hard`.
-
-### 5. 🎨 واجهة تفاعلية ملونة وبانر لشركة `elblasy.app`
-* تصميم ANSI ملون وتدرج ألوان TrueColor.
-* مؤشرات تقدم حية (Spinners) لكل مرحلة تشرح بالتفصيل ما يحدث خلف الكواليس.
-* ملخص نهائي أنيق ببطاقة تحتوي على كافة الروابط وكلمات السر.
+1. **Detects your OS** — validates Ubuntu / Debian compatibility
+2. **Installs Docker Engine + Compose V2** — if not already present
+3. **Interactive Version Selector** — choose Odoo 16, 17, 18, 19, or 20
+4. **Smart Port Hunter** — automatically finds free ports for HTTP (8069+), longpolling (8072+), and PostgreSQL (5432+)
+5. **Creates the instance directory structure** — standard Odoo Enterprise layout under `/opt/elblasy-odoo/instances/`
+6. **Generates all configuration files** — `odoo.conf`, `.env`, `docker-compose.yml`, and the pgvector SQL init script
+7. **Pulls Docker images** and starts the isolated stack
+8. **Health checks** — waits for PostgreSQL readiness and pgvector extension activation, then probes Odoo HTTP
+9. **Installs the `elblasy` CLI** — system-wide management tool for all instances
 
 ---
 
-## 📁 هيكل المجلدات في `/opt`
+## Supported Odoo Versions
 
-يتم تنظيم النظام بأسلوب Enterprise داخل مجلد `/opt/elblasy-odoo`:
+| Version | Docker Hub Image | Status |
+|---------|-----------------|--------|
+| Odoo 18 | `odoo:18` | ✅ Official — Recommended |
+| Odoo 17 | `odoo:17` | ✅ Official — LTS |
+| Odoo 16 | `odoo:16` | ✅ Official — LTS |
+| Odoo 19 | *(no official image yet)* | ⚠️ Fallback to `odoo:17` |
+| Odoo 20 | *(no official image yet)* | ⚠️ Uses local build if found |
+
+> **Odoo 19 & 20**: No official Docker Hub images exist yet. The installer will use a locally built image if found (e.g. `odoo:20`, `odoo20-odoo20:latest`), otherwise falls back to `odoo:17`. Update `ODOO_IMAGE` in `.env` once official images are released.
+
+---
+
+## Directory Structure
+
+Each instance is fully isolated under `/opt/elblasy-odoo/instances/<name>/`:
 
 ```text
 /opt/elblasy-odoo/
-├── instances/
-│   ├── odoo-app-1/
-│   │   ├── etc/
-│   │   │   └── odoo.conf             # إعدادات Odoo المخصصة للنسخة
-│   │   ├── addons/                   # موديولاتك المخصصة وإضافات الذكاء الاصطناعي
-│   │   ├── data/                     # Odoo Filestore والملفات الثابتة
-│   │   ├── db_data/                  # بيانات قاعدة بيانات PostgreSQL 17 + pgvector
-│   │   ├── backups/                  # النسخ الاحتياطية الخاصة بالنسخة
-│   │   ├── init-db/                  # اسكريبتات تفعيل pgvector تلقائياً على postgres و template1
-│   │   ├── docker-compose.yml        # تركيبة تشغيل الحاويات المعزولة
-│   │   └── .env                      # متغيرات البيئة والبورتات وكلمات السر
-│   └── odoo-app-2/                   # النسخة الثانية المعزولة
+└── instances/
+    └── odoo18-1/                          ← instance root
+        ├── etc/
+        │   ├── odoo.conf                  ← Odoo config → /etc/odoo/odoo.conf (read-only)
+        │   └── addons/
+        │       └── 18.0/                  ← your custom modules go here
+        │           └── my_module/         ← → /mnt/extra-addons/18.0/ inside container
+        ├── data/                          ← /var/lib/odoo (filestore, sessions, addons cache)
+        ├── db_data/                       ← PostgreSQL 17 pgdata
+        ├── backups/                       ← automated & manual backups
+        ├── init-db/
+        │   └── 01-pgvector-init.sql       ← runs once on first DB start
+        ├── docker-compose.yml
+        └── .env                           ← credentials & port config (chmod 600)
 ```
+
+### Why `etc/addons/<version>/`?
+
+This mirrors the **Odoo Enterprise standard** where custom addons are organized by version number. The version subfolder (e.g., `18.0/`) is mounted directly into the container at `/mnt/extra-addons/18.0/` and added to `addons_path` in `odoo.conf`. This means:
+
+- Clean separation between core Odoo addons and your custom modules
+- Easy version management when upgrading
+- Compatible with Odoo's internal module scanning logic
 
 ---
 
-## 🛠️ أداة التحكم السريعة للمشرفين (`elblasy` CLI)
+## Volume Mapping
 
-يثبت الاسكريبت أداة سطر أوامر عامة في النظام باسم `elblasy` (أو `elblasy-odoo`) تمكنك من إدارة النسخ بسهولة:
+| Host path | Container path | Purpose |
+|-----------|---------------|---------|
+| `./etc/odoo.conf` | `/etc/odoo/odoo.conf` (ro) | Main config |
+| `./etc/addons/18.0/` | `/mnt/extra-addons/18.0/` | Custom modules |
+| `./data/` | `/var/lib/odoo` | Filestore, sessions, addons cache |
+| `./db_data/` | `/var/lib/postgresql/data` | PostgreSQL data files |
+| `./init-db/` | `/docker-entrypoint-initdb.d/` (ro) | First-run SQL scripts |
+
+---
+
+## AI-Ready: PostgreSQL 17 + pgvector
+
+Every instance uses `pgvector/pgvector:pg17` instead of the standard Postgres image. On first startup, the init script automatically enables:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;    -- AI vector embeddings & similarity search
+CREATE EXTENSION IF NOT EXISTS unaccent;  -- text normalization
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- trigram similarity
+```
+
+These extensions are installed on **both** `postgres` and `template1`, so every new database Odoo creates automatically inherits them — enabling Odoo 17/18/20 AI Agents, RAG (Retrieval-Augmented Generation), and semantic search out of the box.
+
+---
+
+## Hardware Auto-Tuning
+
+The installer detects your server's RAM and CPU count and automatically tunes:
+
+| RAM | `shared_buffers` | `effective_cache_size` | Workers |
+|-----|-----------------|----------------------|---------|
+| < 2 GB | 256 MB | 768 MB | 2 |
+| 2–4 GB | 512 MB | 1.5 GB | 3 |
+| 4–8 GB | 1 GB | 3 GB | 5 |
+| > 8 GB | 2 GB | 6 GB | `(nproc × 2) + 1` |
+
+---
+
+## elblasy CLI — Instance Management
+
+The installer installs a system-wide CLI at `/usr/local/bin/elblasy`:
 
 ```bash
-# عرض جميع النسخ المثبتة وحالتها والبورتات الخاصة بها
+# List all instances (status, ports, version, image)
 elblasy list
 
-# عرض السجلات الحية لنسخة معينة
-elblasy logs odoo-app-1
+# Show running containers
+elblasy ps
 
-# إعادة تشغيل نسخة معينة
-elblasy restart odoo-app-1
+# Start / stop / restart
+elblasy start  odoo18-1
+elblasy stop   odoo18-1
+elblasy restart odoo18-1
 
-# إيقاف أو تشغيل نسخة
-elblasy stop odoo-app-1
-elblasy start odoo-app-1
+# Follow live logs
+elblasy logs odoo18-1
 
-# أخذ نسخة احتياطية فورية كاملة (قاعدة البيانات + المتجهات + الـ Filestore)
-elblasy backup odoo-app-1
+# Show credentials & access URLs
+elblasy info odoo18-1
 
-# عرض تفاصيل وكلمات سر النسخة
-elblasy info odoo-app-1
+# Create a full backup (DB dump + filestore tarball)
+elblasy backup odoo18-1
 
-# حذف نسخة معينة وحاوياتها بأمان
-elblasy delete odoo-app-1
+# Permanently delete instance and all its data
+elblasy delete odoo18-1
 ```
 
 ---
 
-## 🔒 الأمان وكلمات المرور
+## Adding Custom Modules
 
-* يقوم الاسكريبت بتوليد **Master Password** وكلمات سر PostgreSQL عشوائية قوية لكل نسخة باستخدام `openssl`.
-* ملفات التكوين والبيئة تحظى بصلاحيات صارمة (`chmod 600` و `chmod 640`).
-* بورت قاعدة البيانات لا يُعرض للعامة بشكل مكشوف بل يرتبط محلياً فقط للحماية.
+1. Drop your module folder into the instance's addons directory:
+   ```bash
+   cp -r my_module /opt/elblasy-odoo/instances/odoo18-1/etc/addons/18.0/
+   ```
+
+2. Update the apps list in Odoo, or restart and update via CLI:
+   ```bash
+   docker exec odoo_odoo18-1 odoo -u my_module -d mydb --stop-after-init
+   ```
 
 ---
 
-## 🤝 الدعم والمساهمة
+## Security
 
-تم تطوير هذا الاسكريبت بكل فخر بواسطة فريق **[elblasy.app](https://elblasy.app)** لدعم مجتمع مطوري ورواد أعمال Odoo في الشرق الأوسط والعالم العربي.
+- PostgreSQL password: generated with `openssl rand -hex 20` (40 hex chars)
+- Odoo master password: generated with `openssl rand -base64 18` (20 alphanumeric chars)
+- `.env` file: `chmod 600` (owner read-only)
+- `odoo.conf`: `chmod 644`
+- Database port: bound to `127.0.0.1` only — not publicly accessible
+- Backups directory: `chmod 700`
 
-* **الموقع الإلكتروني**: [https://elblasy.app](https://elblasy.app)
-* **الدعم والاستفسارات**: [support@elblasy.app](mailto:support@elblasy.app)
-* **الترخيص**: [MIT License](LICENSE)
+---
+
+## Support & Contributing
+
+Developed with ❤️ by the [elblasy.app](https://elblasy.app) team.
+
+- **Website**: [https://elblasy.app](https://elblasy.app)
+- **Issues & PRs**: [GitHub](https://github.com/elblasy33/last-odoo/issues)
+- **License**: [MIT](LICENSE)
