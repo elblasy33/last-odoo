@@ -534,7 +534,7 @@ db_host     = db
 db_port     = 5432
 db_user     = ${POSTGRES_USER}
 db_password = ${POSTGRES_PASSWORD}
-db_name     = False
+db_name     =
 db_maxconn  = 64
 dbfilter    = .*
 list_db     = True
@@ -557,7 +557,7 @@ limit_time_real_cron = 1800
 
 ; Logging — stdout for Docker (never set logfile in containers)
 log_level = info
-log_db    = False
+log_db    =
 ODOOCONF
     chmod 644 "${TARGET_DIR}/etc/odoo.conf"
 
@@ -659,14 +659,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      HOST:       db
-      PORT:       "5432"
-      USER:       ${POSTGRES_USER}
-      PASSWORD:   ${POSTGRES_PASSWORD}
-      # DB / PGDATABASE: tell wait-for-psql.py which database to probe.
-      # Without this it defaults to the username which does not exist as a DB.
-      DB:         ${POSTGRES_DB}
-      PGDATABASE: ${POSTGRES_DB}
+      HOST:     db
+      PORT:     "5432"
+      USER:     ${POSTGRES_USER}
+      PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "${HTTP_PORT}:8069"
       - "${CHAT_PORT}:8072"
