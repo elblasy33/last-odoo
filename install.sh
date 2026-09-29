@@ -650,15 +650,23 @@ services:
     image: ${ODOO_IMAGE}
     container_name: odoo_${INSTANCE_NAME}
     restart: unless-stopped
-    command: odoo --config=/etc/odoo/odoo.conf
+    # Universal command — works for official images (ENTRYPOINT=/entrypoint.sh)
+    # AND custom builds (ENTRYPOINT=odoo binary).
+    # Using flags only (no 'odoo' prefix) prevents "Unknown command 'odoo'" error
+    # when image entrypoint IS the odoo binary itself.
+    command: ["--config", "/etc/odoo/odoo.conf"]
     depends_on:
       db:
         condition: service_healthy
     environment:
-      HOST:     db
-      PORT:     "5432"
-      USER:     ${POSTGRES_USER}
-      PASSWORD: ${POSTGRES_PASSWORD}
+      HOST:       db
+      PORT:       "5432"
+      USER:       ${POSTGRES_USER}
+      PASSWORD:   ${POSTGRES_PASSWORD}
+      # DB / PGDATABASE: tell wait-for-psql.py which database to probe.
+      # Without this it defaults to the username which does not exist as a DB.
+      DB:         ${POSTGRES_DB}
+      PGDATABASE: ${POSTGRES_DB}
     ports:
       - "${HTTP_PORT}:8069"
       - "${CHAT_PORT}:8072"
