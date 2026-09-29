@@ -91,8 +91,8 @@ print_banner() {
     echo -e "${B4}/ /___  / /___  / /_/ / /___   / ___ | ___/ /  / /         / ___ | / ____/ ____/ ${NC}"
     echo -e "${B5}\\____/ /_____/ /_____/_____/  /_/  |_|/____/  /_/         /_/  |_|/_/   /_/      ${NC}"
     echo -e "${B2}${BOLD}  ╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${B2}${BOLD}  ║${WHITE}  Enterprise Odoo + PostgreSQL 17 (pgvector) Multi-Instance Installer     ${B2}║${NC}"
-    echo -e "${B2}${BOLD}  ║${CYAN}  AI-Ready Architecture | RAG & Vector Embeddings | Port Conflict Hunter  ${B2}║${NC}"
+    echo -e "${B2}${BOLD}  ║${WHITE}  Enterprise Odoo (v16 - v20) Multi-Instance Suite + PostgreSQL 17        ${B2}║${NC}"
+    echo -e "${B2}${BOLD}  ║${CYAN}  AI-Ready Architecture | pgvector Embeddings | Dynamic Port Hunter       ${B2}║${NC}"
     echo -e "${B2}${BOLD}  ║${YELLOW}  Powered by elblasy.app — Empowering Modern Cloud Infrastructure        ${B2}║${NC}"
     echo -e "${B2}${BOLD}  ╚═══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -369,14 +369,57 @@ setup_instance_details() {
         exit 1
     fi
 
-    # Image Selection: Detect if custom Odoo 20 or other local images exist
-    local detected_img="odoo:latest"
-    if docker images --format '{{.Repository}}:{{.Tag}}' | grep -qi "odoo20"; then
-        detected_img=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -i "odoo20" | head -n1)
-    fi
-    echo -e "${WHITE}Select Odoo Image (Press Enter for recommended: ${CYAN}${detected_img}${WHITE}):${NC}"
-    read_from_tty "Odoo Image [default: ${detected_img}]: " INPUT_ODOO_IMAGE "$detected_img"
-    ODOO_IMAGE="${INPUT_ODOO_IMAGE:-$detected_img}"
+    # Version Selection (Odoo 16 to 20)
+    echo ""
+    echo -e "${WHITE}${BOLD}Select Odoo Version to deploy:${NC}"
+    echo -e "  ${CYAN}1)${NC} Odoo ${BOLD}20${NC} (AI Agents, RAG & Vector Embeddings — Next-Gen) ${GREEN}[Recommended / Default]${NC}"
+    echo -e "  ${CYAN}2)${NC} Odoo ${BOLD}19${NC} (Modern Enterprise & Community)"
+    echo -e "  ${CYAN}3)${NC} Odoo ${BOLD}18${NC} (Long Term Support - LTS)"
+    echo -e "  ${CYAN}4)${NC} Odoo ${BOLD}17${NC} (Long Term Support - LTS)"
+    echo -e "  ${CYAN}5)${NC} Odoo ${BOLD}16${NC} (Long Term Support - LTS)"
+    echo -e "  ${CYAN}6)${NC} Custom Docker Image (Specify your own tag/repository)"
+    
+    local version_choice="1"
+    read_from_tty "Enter choice [1-6, default: 1]: " version_choice "1"
+
+    ODOO_VERSION="20"
+    case "$version_choice" in
+        1)
+            ODOO_VERSION="20"
+            if docker images --format '{{.Repository}}:{{.Tag}}' | grep -qi "odoo20"; then
+                ODOO_IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -i "odoo20" | head -n1)
+            else
+                ODOO_IMAGE="odoo:latest"
+            fi
+            ;;
+        2)
+            ODOO_VERSION="19"
+            ODOO_IMAGE="odoo:19"
+            ;;
+        3)
+            ODOO_VERSION="18"
+            ODOO_IMAGE="odoo:18"
+            ;;
+        4)
+            ODOO_VERSION="17"
+            ODOO_IMAGE="odoo:17"
+            ;;
+        5)
+            ODOO_VERSION="16"
+            ODOO_IMAGE="odoo:16"
+            ;;
+        6)
+            ODOO_VERSION="custom"
+            local custom_img="odoo:latest"
+            echo -e "${WHITE}Enter full Docker image tag (e.g. odoo:18, myrepo/odoo:20):${NC}"
+            read_from_tty "Custom Image: " custom_img "odoo:latest"
+            ODOO_IMAGE="$custom_img"
+            ;;
+        *)
+            ODOO_VERSION="20"
+            ODOO_IMAGE="odoo:latest"
+            ;;
+    esac
 
     info "Instance will be deployed in isolated path: ${BOLD}${TARGET_DIR}${NC}"
 
@@ -415,7 +458,7 @@ setup_instance_details() {
     echo ""
     echo -e "${B3}${BOLD}  Instance Configuration Summary:${NC}"
     echo -e "  • Instance Name            : ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
-    echo -e "  • Odoo Docker Image        : ${CYAN}${BOLD}${ODOO_IMAGE}${NC}"
+    echo -e "  • Odoo Version Selected    : ${GREEN}${BOLD}Odoo ${ODOO_VERSION}${NC} (${CYAN}${ODOO_IMAGE}${NC})"
     echo -e "  • Odoo Web Port (HTTP)     : ${CYAN}${BOLD}${HTTP_PORT}${NC}"
     echo -e "  • Longpolling Port (Chat)  : ${CYAN}${BOLD}${CHAT_PORT}${NC}"
     echo -e "  • Database Port (PG Host)  : ${CYAN}${BOLD}${DB_PORT}${NC}"
@@ -862,7 +905,7 @@ display_summary() {
     echo ""
     echo -e "  🏢 ${BOLD}Provider           :${NC} ${B4}${BOLD}elblasy.app${NC}"
     echo -e "  🏷️  ${BOLD}Instance Name      :${NC} ${WHITE}${BOLD}${INSTANCE_NAME}${NC}"
-    echo -e "  🐳 ${BOLD}Odoo Docker Image  :${NC} ${CYAN}${BOLD}${ODOO_IMAGE}${NC}"
+    echo -e "  📦 ${BOLD}Odoo Version       :${NC} ${GREEN}${BOLD}Odoo ${ODOO_VERSION}${NC} (${CYAN}${ODOO_IMAGE}${NC})"
     echo -e "  🌐 ${BOLD}Web Access (HTTP)  :${NC} ${CYAN}${UNDERLINE}http://${server_ip}:${HTTP_PORT}${NC}  ${DIM}(or http://localhost:${HTTP_PORT})${NC}"
     echo -e "  💬 ${BOLD}Longpolling (Chat) :${NC} ${CYAN}${CHAT_PORT}${NC}"
     echo -e "  🐘 ${BOLD}Database           :${NC} ${PURPLE}PostgreSQL 17 + pgvector (AI Vector Enabled)${NC}"

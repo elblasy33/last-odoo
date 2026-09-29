@@ -1,10 +1,10 @@
-# 🚀 Odoo Enterprise & Community Multi-Instance Installer (AI-Ready)
+# 🚀 Odoo Suite (v16 — v20) Multi-Instance Installer (AI-Ready)
 ### Powered by [elblasy.app](https://elblasy.app) — Modern Cloud & DevOps Solutions
 
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%20|%2022.04%20|%2024.04-orange.svg?style=for-the-badge&logo=ubuntu)](https://ubuntu.com)
 [![Docker](https://img.shields.io/badge/Docker-Engine%20v24+-blue.svg?style=for-the-badge&logo=docker)](https://www.docker.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20(pgvector)-336791.svg?style=for-the-badge&logo=postgresql)](https://github.com/pgvector/pgvector)
-[![Odoo](https://img.shields.io/badge/Odoo-AI%20Agents%20Ready-714B67.svg?style=for-the-badge&logo=odoo)](https://www.odoo.com)
+[![Odoo](https://img.shields.io/badge/Odoo-v16%20|%20v17%20|%20v18%20|%20v19%20|%20v20-714B67.svg?style=for-the-badge&logo=odoo)](https://www.odoo.com)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 
 ---
@@ -13,7 +13,7 @@
 
 اسكريبت تثبيت احترافي فائق السرعة لنشر وإدارة نسخ **Odoo** متعددة على نفس السيرفر بنظام **Multi-Tenancy** كامل وبدون أي تعارض في البورتات أو الملفات.
 
-يأتي الاسكريبت مزوداً بحل لميزات الذكاء الاصطناعي الحديثة في Odoo (مثل **AI Agents** وتقنية **RAG - Retrieval-Augmented Generation**) عبر دمج صورة **`pgvector/pgvector:pg17`** (قاعدة بيانات **PostgreSQL 17** المدمج معها امتداد الـ Vectors لحفظ واسترجاع المتجهات بكفاءة فائقة).
+يدعم الاسكريبت اختيار وتثبيت أي إصدار من **Odoo من الإصدار 16 وحتى 20** تفاعلياً، ومجهز بدعم كامل لتقنيات الذكاء الاصطناعي (مثل **AI Agents** وتقنية **RAG - Retrieval-Augmented Generation**) عبر دمج صورة **`pgvector/pgvector:pg17`** (قاعدة بيانات **PostgreSQL 17** المدمج معها امتداد الـ Vectors لحفظ واسترجاع المتجهات بكفاءة فائقة على قاعدة البيانات وقالب `template1`).
 
 ---
 
@@ -36,7 +36,16 @@ sudo bash install.sh
 
 ## ✨ المميزات الجوهرية والتريكات الذكية
 
-### 1. 🔁 تشغيل نسخ متعددة دون أي تعارض (Multi-Instance Isolated Tenancy)
+### 1. 🎛️ قائمة اختيار إصدار Odoo من 16 إلى 20 (Interactive Version Selector)
+يتيح لك الاسكريبت اختيار الإصدار المناسب لمشروعك عبر قائمة تفاعلية مرنة:
+* **Odoo 20**: أحدث إصدار مدعوم بميزات الذكاء الاصطناعي و RAG وحفظ المتجهات في PostgreSQL 17.
+* **Odoo 19**: الإصدار الحديث للشركات والمؤسسات.
+* **Odoo 18 (LTS)**: الإصدار المستقر طويل الدعم.
+* **Odoo 17 (LTS)**: الإصدار المستقر طويل الدعم.
+* **Odoo 16 (LTS)**: الإصدار المستقر الكلاسيكي.
+* **Custom Docker Image**: إمكانية إدخال أي صورة مخصصة أو مستودع خاص بك.
+
+### 2. 🔁 تشغيل نسخ متعددة دون أي تعارض (Multi-Instance Isolated Tenancy)
 * عند تشغيل الاسكريبت لأول مرة، ينشئ نسختك الأولى (مثلاً `odoo-app-1`).
 * **عند تشغيل الاسكريبت مرة ثانية أو ثالثة على نفس السيرفر**:
   * يكتشف الاسكريبت النسخ الحالية تلقائياً ويعرضها لك.
